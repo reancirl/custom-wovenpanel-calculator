@@ -1,0 +1,42 @@
+query CartTransformRunInput {
+  cart {
+    lines {
+      id
+      length: attribute(key: "length") {
+        value
+      }
+      width: attribute(key: "width") {
+        value
+      }
+      area: attribute(key: "area") {
+        value
+      }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+          product {
+            enableSqmPricing: metafield(namespace: "custom", key: "enable_sqm_pricing") {
+              value
+            }
+            pricePerSqm: metafield(namespace: "custom", key: "price_per_sqm") {
+              value
+            }
+            minLength: metafield(namespace: "custom", key: "min_length") {
+              value
+            }
+            maxLength: metafield(namespace: "custom", key: "max_length") {
+              value
+            }
+            minWidth: metafield(namespace: "custom", key: "min_width") {
+              value
+            }
+            maxWidth: metafield(namespace: "custom", key: "max_width") {
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+}

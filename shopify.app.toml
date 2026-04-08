@@ -1,0 +1,106 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "963ea30c09ed3ebda1cb5e057f011595"
+name = "custom-wovenpanel-calculator"
+application_url = "https://example.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+include_config_on_deploy = true
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "write_products,write_metaobjects,write_metaobject_definitions"
+
+[auth]
+redirect_urls = [ "https://example.com/api/auth" ]
+
+[product.metafields.custom.enable_sqm_pricing]
+type = "boolean"
+name = "Enable SQM pricing"
+description = "Turns on length x width area pricing for this product"
+
+  [product.metafields.custom.enable_sqm_pricing.access]
+  admin = "merchant_read_write"
+  storefront = "public_read"
+
+[product.metafields.custom.price_per_sqm]
+type = "number_decimal"
+name = "Price per SQM"
+description = "Price multiplier used with the customer-entered area"
+
+  [product.metafields.custom.price_per_sqm.access]
+  admin = "merchant_read_write"
+  storefront = "public_read"
+
+[product.metafields.custom.min_length]
+type = "number_decimal"
+name = "Minimum length (m)"
+description = "Smallest allowed customer input length in meters"
+
+  [product.metafields.custom.min_length.access]
+  admin = "merchant_read_write"
+  storefront = "public_read"
+
+[product.metafields.custom.max_length]
+type = "number_decimal"
+name = "Maximum length (m)"
+description = "Largest allowed customer input length in meters"
+
+  [product.metafields.custom.max_length.access]
+  admin = "merchant_read_write"
+  storefront = "public_read"
+
+[product.metafields.custom.min_width]
+type = "number_decimal"
+name = "Minimum width (m)"
+description = "Smallest allowed customer input width in meters"
+
+  [product.metafields.custom.min_width.access]
+  admin = "merchant_read_write"
+  storefront = "public_read"
+
+[product.metafields.custom.max_width]
+type = "number_decimal"
+name = "Maximum width (m)"
+description = "Largest allowed customer input width in meters"
+
+  [product.metafields.custom.max_width.access]
+  admin = "merchant_read_write"
+  storefront = "public_read"
+
+[product.metafields.app.demo_info]
+type = "single_line_text_field"
+name = "Demo Source Info"
+description = "Tracks products created by the Shopify app template for development"
+
+  [product.metafields.app.demo_info.access]
+  admin = "merchant_read_write"
+
+[metaobjects.app.example]
+name = "Example"
+description = "An example metaobject definition created by this template"
+
+  [metaobjects.app.example.access]
+  admin = "merchant_read_write"
+
+[metaobjects.app.example.fields.title]
+name = "Title"
+type = "single_line_text_field"
+required = true
+
+[metaobjects.app.example.fields.description]
+name = "Description"
+type = "multi_line_text_field"

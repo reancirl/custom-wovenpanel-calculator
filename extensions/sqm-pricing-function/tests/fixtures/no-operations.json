@@ -1,0 +1,41 @@
+{
+  "payload": {
+    "export": "cart-transform-run",
+    "target": "cart.transform.run",
+    "input": {
+      "cart": {
+        "lines": [
+          {
+            "id": "gid://shopify/CartLine/1",
+            "length": {
+              "value": "2"
+            },
+            "width": {
+              "value": "3"
+            },
+            "area": {
+              "value": "6"
+            },
+            "merchandise": {
+              "__typename": "ProductVariant",
+              "id": "gid://shopify/ProductVariant/1",
+              "product": {
+                "enableSqmPricing": {
+                  "value": "false"
+                },
+                "pricePerSqm": null,
+                "minLength": null,
+                "maxLength": null,
+                "minWidth": null,
+                "maxWidth": null
+              }
+            }
+          }
+        ]
+      }
+    },
+    "output": {
+      "operations": []
+    }
+  }
+}

@@ -1,0 +1,97 @@
+{% liquid
+  assign target_product = block.settings.product
+  if target_product == blank
+    assign target_product = product
+  endif
+
+  if target_product
+    assign enable_sqm_pricing = target_product.metafields.custom.enable_sqm_pricing.value
+    assign price_per_sqm = target_product.metafields.custom.price_per_sqm.value
+    assign min_length = target_product.metafields.custom.min_length.value | default: 0.1
+    assign max_length = target_product.metafields.custom.max_length.value | default: 100
+    assign min_width = target_product.metafields.custom.min_width.value | default: 0.1
+    assign max_width = target_product.metafields.custom.max_width.value | default: 100
+  endif
+%}
+
+<div
+  class="sqm-pricing-block"
+  data-sqm-pricing
+  data-enabled="{{ enable_sqm_pricing | default: false }}"
+  data-price-per-sqm="{{ price_per_sqm | default: 0 }}"
+  data-min-length="{{ min_length }}"
+  data-max-length="{{ max_length }}"
+  data-min-width="{{ min_width }}"
+  data-max-width="{{ max_width }}"
+  data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
+  data-locale="{{ request.locale.iso_code | default: shop.locale | replace: '_', '-' }}"
+>
+  {% if target_product == blank %}
+    <p class="sqm-pricing-block__message">Select a product to enable SQM pricing for this block.</p>
+  {% elsif enable_sqm_pricing != true %}
+    <p class="sqm-pricing-block__message">SQM pricing is disabled for this product.</p>
+  {% else %}
+    <div class="sqm-pricing-block__field-grid">
+      <label class="sqm-pricing-block__field">
+        <span>Length (m)</span>
+        <input
+          type="number"
+          inputmode="decimal"
+          min="{{ min_length }}"
+          max="{{ max_length }}"
+          step="0.01"
+          data-sqm-length
+          placeholder="{{ min_length }}"
+          required
+        >
+      </label>
+
+      <label class="sqm-pricing-block__field">
+        <span>Width (m)</span>
+        <input
+          type="number"
+          inputmode="decimal"
+          min="{{ min_width }}"
+          max="{{ max_width }}"
+          step="0.01"
+          data-sqm-width
+          placeholder="{{ min_width }}"
+          required
+        >
+      </label>
+    </div>
+
+    <p class="sqm-pricing-block__error" data-sqm-error role="alert" aria-live="polite"></p>
+
+    <div class="sqm-pricing-block__summary">
+      <p>
+        Area:
+        <strong><span data-sqm-area>0</span> sqm</strong>
+      </p>
+      <p>
+        Total price:
+        <strong data-sqm-total>{{ 0 | money }}</strong>
+      </p>
+    </div>
+  {% endif %}
+</div>
+
+{% schema %}
+{
+  "name": "SQM pricing",
+  "target": "section",
+  "enabled_on": {
+    "templates": ["product"]
+  },
+  "stylesheet": "sqm-pricing.css",
+  "javascript": "sqm-pricing.js",
+  "settings": [
+    {
+      "type": "product",
+      "id": "product",
+      "label": "Product",
+      "autofill": true
+    }
+  ]
+}
+{% endschema %}

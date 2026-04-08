@@ -1,0 +1,52 @@
+.sqm-pricing-block {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  padding: 1rem;
+  margin: 1rem 0;
+  background: #ffffff;
+}
+
+.sqm-pricing-block__field-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.sqm-pricing-block__field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.sqm-pricing-block__field span {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.sqm-pricing-block__field input {
+  width: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  font-size: 1rem;
+}
+
+.sqm-pricing-block__summary {
+  margin-top: 0.85rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.sqm-pricing-block__summary p {
+  margin: 0;
+}
+
+.sqm-pricing-block__error {
+  margin: 0.75rem 0 0;
+  color: #b00020;
+  min-height: 1.25rem;
+  font-size: 0.9rem;
+}
+
+.sqm-pricing-block__message {
+  margin: 0;
+}
