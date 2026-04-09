@@ -2,7 +2,7 @@
 
 /**
  * @typedef {import("../generated/api").CartTransformRunInput} CartTransformRunInput
- * @typedef {import("../generated/api").CartTransformRunResult} CartTransformRunResult
+ * @typedef {import("../generated/api").FunctionRunResult} CartTransformRunResult
  */
 
 /**
@@ -74,6 +74,15 @@ function toMoneyString(amount) {
 }
 
 /**
+ * @param {string} key
+ * @param {string | null | undefined} value
+ */
+function buildAttribute(key, value) {
+  if (typeof value !== "string") return null;
+  return { key, value };
+}
+
+/**
  * @param {CartTransformRunInput} input
  * @returns {CartTransformRunResult}
  */
@@ -122,16 +131,31 @@ export function cartTransformRun(input) {
     const newUnitPrice = area * baseUnitPrice;
     if (!Number.isFinite(newUnitPrice) || newUnitPrice <= 0) continue;
 
+    const attributes = [
+      buildAttribute("length_mm", line.length?.value ? toMoneyString(length * 1000) : null),
+      buildAttribute("width_mm", line.width?.value ? toMoneyString(width * 1000) : null),
+      buildAttribute("length", line.length?.value),
+      buildAttribute("width", line.width?.value),
+      buildAttribute("area", toMoneyString(area)),
+    ].filter(Boolean);
+
     operations.push({
-      lineUpdate: {
+      expand: {
         cartLineId: line.id,
-        price: {
-          adjustment: {
-            fixedPricePerUnit: {
-              amount: toMoneyString(newUnitPrice),
+        expandedCartItems: [
+          {
+            merchandiseId: line.merchandise.id,
+            quantity: line.quantity,
+            ...(attributes.length > 0 ? { attributes } : {}),
+            price: {
+              adjustment: {
+                fixedPricePerUnit: {
+                  amount: toMoneyString(newUnitPrice),
+                },
+              },
             },
           },
-        },
+        ],
       },
     });
   }

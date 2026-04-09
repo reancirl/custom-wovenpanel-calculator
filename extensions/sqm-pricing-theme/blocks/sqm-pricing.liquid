@@ -34,29 +34,29 @@
   >
     <div class="sqm-pricing-block__field-grid">
       <label class="sqm-pricing-block__field">
-        <span>Length (m)</span>
+        <span>Length (mm)</span>
         <input
           type="number"
           inputmode="decimal"
-          min="{{ min_length }}"
-          max="{{ max_length }}"
+          min="{{ min_length | times: 1000.0 }}"
+          max="{{ max_length | times: 1000.0 }}"
           step="0.01"
           data-sqm-length
-          placeholder="{{ min_length }}"
+          placeholder="{{ min_length | times: 1000.0 }}"
           required
         >
       </label>
 
       <label class="sqm-pricing-block__field">
-        <span>Width (m)</span>
+        <span>Width (mm)</span>
         <input
           type="number"
           inputmode="decimal"
-          min="{{ min_width }}"
-          max="{{ max_width }}"
+          min="{{ min_width | times: 1000.0 }}"
+          max="{{ max_width | times: 1000.0 }}"
           step="0.01"
           data-sqm-width
-          placeholder="{{ min_width }}"
+          placeholder="{{ min_width | times: 1000.0 }}"
           required
         >
       </label>

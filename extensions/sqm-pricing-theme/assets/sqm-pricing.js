@@ -8,6 +8,7 @@
   const TOTAL_OUTPUT_SELECTOR = "[data-sqm-total]";
   const ERROR_OUTPUT_SELECTOR = "[data-sqm-error]";
   const VARIANT_PRICES_SELECTOR = "[data-sqm-variant-prices]";
+  const MM_PER_METER = 1000;
 
   function parseNumber(value) {
     if (typeof value !== "string") return null;
@@ -137,10 +138,10 @@
     const minWidth = parseNumber(root.dataset.minWidth || "") ?? 0.1;
     const maxWidth = parseNumber(root.dataset.maxWidth || "") ?? 100;
 
-    lengthInput.min = normalizeDecimal(minLength, 4);
-    lengthInput.max = normalizeDecimal(maxLength, 4);
-    widthInput.min = normalizeDecimal(minWidth, 4);
-    widthInput.max = normalizeDecimal(maxWidth, 4);
+    lengthInput.min = normalizeDecimal(minLength * MM_PER_METER, 2);
+    lengthInput.max = normalizeDecimal(maxLength * MM_PER_METER, 2);
+    widthInput.min = normalizeDecimal(minWidth * MM_PER_METER, 2);
+    widthInput.max = normalizeDecimal(maxWidth * MM_PER_METER, 2);
 
     const currency = root.dataset.currency || "USD";
     const locale = root.dataset.locale || "en-US";
@@ -159,34 +160,41 @@
     }
 
     function getMeasurement(unitPrice) {
-      const length = parseNumber(lengthInput.value);
-      const width = parseNumber(widthInput.value);
+      const lengthMm = parseNumber(lengthInput.value);
+      const widthMm = parseNumber(widthInput.value);
 
-      if (length === null || width === null) {
+      if (lengthMm === null || widthMm === null) {
         return {
           valid: false,
           error: "Enter both length and width.",
         };
       }
 
-      if (length <= 0 || width <= 0) {
+      if (lengthMm <= 0 || widthMm <= 0) {
         return {
           valid: false,
           error: "Length and width must be greater than 0.",
         };
       }
 
+      const length = lengthMm / MM_PER_METER;
+      const width = widthMm / MM_PER_METER;
+
       if (length < minLength || length > maxLength) {
+        const minLengthMm = round(minLength * MM_PER_METER, 2);
+        const maxLengthMm = round(maxLength * MM_PER_METER, 2);
         return {
           valid: false,
-          error: `Length must be between ${minLength} and ${maxLength} meters.`,
+          error: `Length must be between ${minLengthMm} and ${maxLengthMm} mm.`,
         };
       }
 
       if (width < minWidth || width > maxWidth) {
+        const minWidthMm = round(minWidth * MM_PER_METER, 2);
+        const maxWidthMm = round(maxWidth * MM_PER_METER, 2);
         return {
           valid: false,
-          error: `Width must be between ${minWidth} and ${maxWidth} meters.`,
+          error: `Width must be between ${minWidthMm} and ${maxWidthMm} mm.`,
         };
       }
 
@@ -209,6 +217,8 @@
 
       return {
         valid: true,
+        lengthMm,
+        widthMm,
         length,
         width,
         area,
@@ -217,6 +227,8 @@
     }
 
     function applyPropertiesToForm(form, measurement) {
+      upsertHiddenInput(form, "properties[length_mm]", normalizeDecimal(measurement.lengthMm, 2));
+      upsertHiddenInput(form, "properties[width_mm]", normalizeDecimal(measurement.widthMm, 2));
       upsertHiddenInput(form, "properties[length]", formatArea(measurement.length));
       upsertHiddenInput(form, "properties[width]", formatArea(measurement.width));
       upsertHiddenInput(form, "properties[area]", formatArea(measurement.area));

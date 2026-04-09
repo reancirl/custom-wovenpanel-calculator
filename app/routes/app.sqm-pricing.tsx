@@ -54,12 +54,15 @@ type RowState = {
   maxWidth: string;
 };
 
-const DEFAULT_MIN_LENGTH = "0.1";
-const DEFAULT_MAX_LENGTH = "100";
-const DEFAULT_MIN_WIDTH = "0.1";
-const DEFAULT_MAX_WIDTH = "100";
+const MM_PER_METER = 1000;
+const LEGACY_MM_COMPAT_THRESHOLD_METERS = 100;
+const DEFAULT_MIN_LENGTH_METERS = 0.1;
+const DEFAULT_MAX_LENGTH_METERS = 100;
+const DEFAULT_MIN_WIDTH_METERS = 0.1;
+const DEFAULT_MAX_WIDTH_METERS = 100;
 const METAFIELDS_SET_BATCH_LIMIT = 25;
 const MAX_PRODUCT_MATCH_OPTIONS = 80;
+const SQM_CART_TRANSFORM_FUNCTION_HANDLE = "sqm-pricing-function";
 
 const PRODUCT_QUERY = `#graphql
   query SqmPricingProducts {
@@ -102,6 +105,61 @@ const SET_METAFIELDS_MUTATION = `#graphql
   }
 `;
 
+const ENSURE_CART_TRANSFORM_MUTATION = `#graphql
+  mutation EnsureSqmCartTransform($functionHandle: String!, $blockOnFailure: Boolean) {
+    cartTransformCreate(functionHandle: $functionHandle, blockOnFailure: $blockOnFailure) {
+      cartTransform {
+        id
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const FIND_SQM_FUNCTION_QUERY = `#graphql
+  query FindSqmCartTransformFunction {
+    shopifyFunctions(first: 50) {
+      edges {
+        node {
+          id
+          apiType
+          title
+        }
+      }
+    }
+  }
+`;
+
+const ENSURE_CART_TRANSFORM_BY_ID_MUTATION = `#graphql
+  mutation EnsureSqmCartTransformById($functionId: String!, $blockOnFailure: Boolean) {
+    cartTransformCreate(functionId: $functionId, blockOnFailure: $blockOnFailure) {
+      cartTransform {
+        id
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const ACTIVE_CART_TRANSFORM_QUERY = `#graphql
+  query ActiveCartTransform {
+    cartTransforms(first: 1) {
+      edges {
+        node {
+          id
+          functionId
+        }
+      }
+    }
+  }
+`;
+
 function parsePositiveDecimal(value: FormDataEntryValue | null): number | null {
   if (value === null) return null;
   const normalized = String(value).trim();
@@ -118,6 +176,28 @@ function toDecimalString(value: number): string {
   return rounded.toString();
 }
 
+function metersToMillimeters(value: number): number {
+  return value * MM_PER_METER;
+}
+
+function millimetersToMeters(value: number): number {
+  return value / MM_PER_METER;
+}
+
+function toUiMillimeters(storedMetersValue: string | null | undefined, fallbackMeters: number): string {
+  const parsedMeters = parsePositiveDecimal(storedMetersValue ?? null);
+  if (parsedMeters === null) {
+    return toDecimalString(metersToMillimeters(fallbackMeters));
+  }
+
+  // Backward compatibility: previous UI accepted mm while labeled as meters.
+  if (parsedMeters >= LEGACY_MM_COMPAT_THRESHOLD_METERS) {
+    return toDecimalString(parsedMeters);
+  }
+
+  return toDecimalString(metersToMillimeters(parsedMeters));
+}
+
 function buildProductLabel(product: ProductConfig): string {
   return `${product.title} (${product.handle})`;
 }
@@ -127,10 +207,10 @@ function createEmptyRow(key: string): RowState {
     key,
     productQuery: "",
     productId: "",
-    minLength: DEFAULT_MIN_LENGTH,
-    maxLength: DEFAULT_MAX_LENGTH,
-    minWidth: DEFAULT_MIN_WIDTH,
-    maxWidth: DEFAULT_MAX_WIDTH,
+    minLength: toDecimalString(metersToMillimeters(DEFAULT_MIN_LENGTH_METERS)),
+    maxLength: toDecimalString(metersToMillimeters(DEFAULT_MAX_LENGTH_METERS)),
+    minWidth: toDecimalString(metersToMillimeters(DEFAULT_MIN_WIDTH_METERS)),
+    maxWidth: toDecimalString(metersToMillimeters(DEFAULT_MAX_WIDTH_METERS)),
   };
 }
 
@@ -141,10 +221,10 @@ function buildInitialRows(products: ProductConfig[]): RowState[] {
       key: `enabled-${index}-${product.id}`,
       productQuery: buildProductLabel(product),
       productId: product.id,
-      minLength: product.minLength || DEFAULT_MIN_LENGTH,
-      maxLength: product.maxLength || DEFAULT_MAX_LENGTH,
-      minWidth: product.minWidth || DEFAULT_MIN_WIDTH,
-      maxWidth: product.maxWidth || DEFAULT_MAX_WIDTH,
+      minLength: toUiMillimeters(product.minLength, DEFAULT_MIN_LENGTH_METERS),
+      maxLength: toUiMillimeters(product.maxLength, DEFAULT_MAX_LENGTH_METERS),
+      minWidth: toUiMillimeters(product.minWidth, DEFAULT_MIN_WIDTH_METERS),
+      maxWidth: toUiMillimeters(product.maxWidth, DEFAULT_MAX_WIDTH_METERS),
     }));
 
   return enabledRows.length > 0 ? enabledRows : [createEmptyRow("row-0")];
@@ -158,6 +238,193 @@ function chunkArray<T>(values: T[], size: number): T[][] {
   }
 
   return chunks;
+}
+
+type EnsureCartTransformResult = {
+  ok: boolean;
+  message?: string;
+};
+
+type ShopifyFunctionNode = {
+  id: string;
+  apiType: string;
+  title: string;
+};
+
+async function isSqmCartTransformAlreadyActive(admin: { graphql: Function }): Promise<boolean> {
+  const [sqmFunctionId, transformResponse] = await Promise.all([
+    findSqmCartTransformFunctionId(admin),
+    admin.graphql(ACTIVE_CART_TRANSFORM_QUERY),
+  ]);
+
+  if (!sqmFunctionId) return false;
+
+  const transformResponseJson = await transformResponse.json();
+  const topLevelErrors = transformResponseJson.errors ?? [];
+  if (topLevelErrors.length > 0) return false;
+
+  const activeTransformFunctionId =
+    transformResponseJson.data?.cartTransforms?.edges?.[0]?.node?.functionId ?? null;
+
+  return activeTransformFunctionId === sqmFunctionId;
+}
+
+async function findSqmCartTransformFunctionId(admin: { graphql: Function }): Promise<string | null> {
+  const response = await admin.graphql(FIND_SQM_FUNCTION_QUERY);
+  const responseJson = await response.json();
+  const topLevelErrors = responseJson.errors ?? [];
+  if (topLevelErrors.length > 0) return null;
+
+  const edges = responseJson.data?.shopifyFunctions?.edges ?? [];
+  for (const edge of edges) {
+    const node = edge?.node as ShopifyFunctionNode | undefined;
+    if (!node) continue;
+    if (node.apiType === "cart_transform" && node.title === SQM_CART_TRANSFORM_FUNCTION_HANDLE) {
+      return node.id;
+    }
+  }
+
+  return null;
+}
+
+async function ensureSqmCartTransformByFunctionId(
+  admin: { graphql: Function },
+  functionId: string,
+): Promise<EnsureCartTransformResult> {
+  const response = await admin.graphql(ENSURE_CART_TRANSFORM_BY_ID_MUTATION, {
+    variables: {
+      functionId,
+      blockOnFailure: false,
+    },
+  });
+  const responseJson = await response.json();
+  const topLevelErrors = responseJson.errors ?? [];
+
+  if (topLevelErrors.length > 0) {
+    return {
+      ok: false,
+      message: topLevelErrors[0]?.message ?? "Unable to activate cart transform by function ID.",
+    };
+  }
+
+  const userErrors = responseJson.data?.cartTransformCreate?.userErrors ?? [];
+  if (userErrors.length === 0) {
+    return { ok: true };
+  }
+
+  const normalizedMessages = userErrors
+    .map((error: { message?: string }) => String(error?.message ?? ""))
+    .filter(Boolean)
+    .join(" ");
+
+  if (/already exists|only.*cart transform/i.test(normalizedMessages)) {
+    if (await isSqmCartTransformAlreadyActive(admin)) {
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      message:
+        "Another cart transform is already active in this store. Remove or disable the existing cart transform, then save rows again.",
+    };
+  }
+
+  return {
+    ok: false,
+    message: userErrors[0]?.message ?? "Unable to activate cart transform by function ID.",
+  };
+}
+
+async function ensureSqmCartTransform(admin: { graphql: Function }): Promise<EnsureCartTransformResult> {
+  try {
+    const response = await admin.graphql(ENSURE_CART_TRANSFORM_MUTATION, {
+      variables: {
+        functionHandle: SQM_CART_TRANSFORM_FUNCTION_HANDLE,
+        blockOnFailure: false,
+      },
+    });
+    const responseJson = await response.json();
+    const topLevelErrors = responseJson.errors ?? [];
+
+    if (topLevelErrors.length > 0) {
+      const normalizedMessages = topLevelErrors
+        .map((error: { message?: string }) => String(error?.message ?? ""))
+        .filter(Boolean)
+        .join(" ");
+
+      if (/access denied/i.test(normalizedMessages)) {
+        // Fallback for stores where functionHandle path fails but functionId works.
+        const functionId = await findSqmCartTransformFunctionId(admin);
+        if (functionId) {
+          const byIdResult = await ensureSqmCartTransformByFunctionId(admin, functionId);
+          if (byIdResult.ok) return byIdResult;
+        }
+
+        return {
+          ok: false,
+          message:
+            "Cart transform access was denied. Ensure the app has `write_cart_transforms`, your staff account has Products and Preferences permission, and the store is upgraded to Checkout Extensibility.",
+        };
+      }
+
+      if (/could not find function|function.*not found/i.test(normalizedMessages)) {
+        return {
+          ok: false,
+          message:
+            "SQM function handle was not found in this store. Keep `shopify app dev` running (or deploy the app), then save rows again.",
+        };
+      }
+
+      return {
+        ok: false,
+        message: topLevelErrors[0]?.message ?? "Unable to activate cart transform for SQM pricing.",
+      };
+    }
+
+    const userErrors = responseJson.data?.cartTransformCreate?.userErrors ?? [];
+
+    if (userErrors.length === 0) {
+      return { ok: true };
+    }
+
+    const normalizedMessages = userErrors
+      .map((error: { message?: string }) => String(error?.message ?? ""))
+      .filter(Boolean)
+      .join(" ");
+
+    if (/already exists|only.*cart transform/i.test(normalizedMessages)) {
+      if (await isSqmCartTransformAlreadyActive(admin)) {
+        return { ok: true };
+      }
+
+      return {
+        ok: false,
+        message:
+          "Another cart transform is already active in this store. Remove or disable the existing cart transform, then save rows again.",
+      };
+    }
+
+    if (/could not find function|function.*not found/i.test(normalizedMessages)) {
+      return {
+        ok: false,
+        message:
+          "SQM function handle was not found in this store. Keep `shopify app dev` running (or deploy the app), then save rows again.",
+      };
+    }
+
+    return {
+      ok: false,
+      message:
+        userErrors[0]?.message ??
+        "Unable to activate cart transform for SQM pricing.",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        "Unable to activate cart transform. Re-authenticate the app with cart transform scopes, then save rows again.",
+    };
+  }
 }
 
 async function fetchProducts(admin: { graphql: Function }): Promise<ProductConfig[]> {
@@ -174,10 +441,10 @@ async function fetchProducts(admin: { graphql: Function }): Promise<ProductConfi
       handle: node.handle,
       status: node.status,
       enableSqmPricing: node.enableSqmPricing?.value === "true",
-      minLength: node.minLength?.value ?? DEFAULT_MIN_LENGTH,
-      maxLength: node.maxLength?.value ?? DEFAULT_MAX_LENGTH,
-      minWidth: node.minWidth?.value ?? DEFAULT_MIN_WIDTH,
-      maxWidth: node.maxWidth?.value ?? DEFAULT_MAX_WIDTH,
+      minLength: node.minLength?.value ?? toDecimalString(DEFAULT_MIN_LENGTH_METERS),
+      maxLength: node.maxLength?.value ?? toDecimalString(DEFAULT_MAX_LENGTH_METERS),
+      minWidth: node.minWidth?.value ?? toDecimalString(DEFAULT_MIN_WIDTH_METERS),
+      maxWidth: node.maxWidth?.value ?? toDecimalString(DEFAULT_MAX_WIDTH_METERS),
     };
   });
 }
@@ -238,19 +505,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } satisfies ActionData;
     }
 
-    const minLength = parsePositiveDecimal(rowMinLengths[index] ?? null);
-    const maxLength = parsePositiveDecimal(rowMaxLengths[index] ?? null);
-    const minWidth = parsePositiveDecimal(rowMinWidths[index] ?? null);
-    const maxWidth = parsePositiveDecimal(rowMaxWidths[index] ?? null);
+    const minLengthMm = parsePositiveDecimal(rowMinLengths[index] ?? null);
+    const maxLengthMm = parsePositiveDecimal(rowMaxLengths[index] ?? null);
+    const minWidthMm = parsePositiveDecimal(rowMinWidths[index] ?? null);
+    const maxWidthMm = parsePositiveDecimal(rowMaxWidths[index] ?? null);
 
-    if (minLength === null || maxLength === null || minWidth === null || maxWidth === null) {
+    if (minLengthMm === null || maxLengthMm === null || minWidthMm === null || maxWidthMm === null) {
       return {
         ok: false,
-        message: `Row ${index + 1}: min/max values must be valid numbers greater than 0.`,
+        message: `Row ${index + 1}: min/max values must be valid numbers greater than 0 (mm).`,
       } satisfies ActionData;
     }
 
-    if (minLength > maxLength || minWidth > maxWidth) {
+    if (minLengthMm > maxLengthMm || minWidthMm > maxWidthMm) {
       return {
         ok: false,
         message: `Row ${index + 1}: minimum values must be less than or equal to maximum values.`,
@@ -258,10 +525,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     selectedRows.set(productId, {
-      minLength,
-      maxLength,
-      minWidth,
-      maxWidth,
+      minLength: millimetersToMeters(minLengthMm),
+      maxLength: millimetersToMeters(maxLengthMm),
+      minWidth: millimetersToMeters(minWidthMm),
+      maxWidth: millimetersToMeters(maxWidthMm),
     });
   }
 
@@ -345,9 +612,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  const cartTransformResult = await ensureSqmCartTransform(admin);
+  if (!cartTransformResult.ok) {
+    return {
+      ok: false,
+      message: cartTransformResult.message ?? "Unable to activate cart transform.",
+    } satisfies ActionData;
+  }
+
   return {
     ok: true,
-    message: `Saved. ${selectedRows.size} product row(s) are now using the calculator.`,
+    message: `Saved. ${selectedRows.size} product row(s) are now using the calculator and cart pricing transform is active.`,
   } satisfies ActionData;
 };
 
@@ -410,7 +685,7 @@ export default function SqmPricingPage() {
       <s-section>
         <s-paragraph>
           Add one row per product. Search the product, choose it from the dropdown, then set
-          min/max dimensions.
+          min/max dimensions in millimeters (mm).
         </s-paragraph>
       </s-section>
 
@@ -495,8 +770,8 @@ export default function SqmPricingPage() {
 
                     <s-grid gap="base" gridTemplateColumns="repeat(auto-fit, minmax(12rem, 1fr))">
                       <s-number-field
-                        label="Min length (m)"
-                        min="0.01"
+                        label="Min length (mm)"
+                        min="0.1"
                         step="0.01"
                         value={row.minLength}
                         onInput={(event: Event) => {
@@ -509,8 +784,8 @@ export default function SqmPricingPage() {
                       />
 
                       <s-number-field
-                        label="Max length (m)"
-                        min="0.01"
+                        label="Max length (mm)"
+                        min="0.1"
                         step="0.01"
                         value={row.maxLength}
                         onInput={(event: Event) => {
@@ -523,8 +798,8 @@ export default function SqmPricingPage() {
                       />
 
                       <s-number-field
-                        label="Min width (m)"
-                        min="0.01"
+                        label="Min width (mm)"
+                        min="0.1"
                         step="0.01"
                         value={row.minWidth}
                         onInput={(event: Event) => {
@@ -537,8 +812,8 @@ export default function SqmPricingPage() {
                       />
 
                       <s-number-field
-                        label="Max width (m)"
-                        min="0.01"
+                        label="Max width (mm)"
+                        min="0.1"
                         step="0.01"
                         value={row.maxWidth}
                         onInput={(event: Event) => {
