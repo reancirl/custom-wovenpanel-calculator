@@ -317,7 +317,7 @@ async function ensureSqmCartTransformByFunctionId(
     .filter(Boolean)
     .join(" ");
 
-  if (/already exists|only.*cart transform/i.test(normalizedMessages)) {
+  if (/already exists|already registered|only.*cart transform/i.test(normalizedMessages)) {
     if (await isSqmCartTransformAlreadyActive(admin)) {
       return { ok: true };
     }
@@ -392,7 +392,7 @@ async function ensureSqmCartTransform(admin: { graphql: Function }): Promise<Ens
       .filter(Boolean)
       .join(" ");
 
-    if (/already exists|only.*cart transform/i.test(normalizedMessages)) {
+    if (/already exists|already registered|only.*cart transform/i.test(normalizedMessages)) {
       if (await isSqmCartTransformAlreadyActive(admin)) {
         return { ok: true };
       }
