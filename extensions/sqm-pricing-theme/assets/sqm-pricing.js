@@ -7,6 +7,7 @@
   const AREA_OUTPUT_SELECTOR = "[data-sqm-area]";
   const TOTAL_OUTPUT_SELECTOR = "[data-sqm-total]";
   const ERROR_OUTPUT_SELECTOR = "[data-sqm-error]";
+  const VARIANT_PRICES_SELECTOR = "[data-sqm-variant-prices]";
 
   function parseNumber(value) {
     if (typeof value !== "string") return null;
@@ -66,6 +67,50 @@
     return Array.from(scope.querySelectorAll('form[action*="/cart/add"]'));
   }
 
+  function getVariantPrices(root) {
+    const variantPricesElement = root.querySelector(VARIANT_PRICES_SELECTOR);
+    if (!variantPricesElement) return {};
+
+    try {
+      const raw = JSON.parse(variantPricesElement.textContent || "{}");
+      return Object.entries(raw).reduce((accumulator, [variantId, amount]) => {
+        const parsedAmount =
+          typeof amount === "number" ? amount : parseNumber(String(amount ?? ""));
+        if (parsedAmount !== null && parsedAmount > 0) {
+          accumulator[String(variantId)] = parsedAmount;
+        }
+
+        return accumulator;
+      }, {});
+    } catch (error) {
+      return {};
+    }
+  }
+
+  function getSelectedVariantId(forms) {
+    for (const form of forms) {
+      const variantInput = form.querySelector('[name="id"]');
+      if (!variantInput) continue;
+
+      const variantId = variantInput.value ? String(variantInput.value) : "";
+      if (variantId) {
+        return variantId;
+      }
+    }
+
+    return null;
+  }
+
+  function getActiveUnitPrice(forms, fallbackUnitPrice, variantPrices) {
+    const selectedVariantId = getSelectedVariantId(forms);
+
+    if (selectedVariantId && variantPrices[selectedVariantId]) {
+      return variantPrices[selectedVariantId];
+    }
+
+    return fallbackUnitPrice;
+  }
+
   function initializeBlock(root) {
     if (root.dataset.sqmInitialized === "true") return;
     root.dataset.sqmInitialized = "true";
@@ -81,9 +126,9 @@
     }
 
     const enabled = root.dataset.enabled === "true";
-    const pricePerSqm = parseNumber(root.dataset.pricePerSqm || "");
+    const fallbackUnitPrice = parseNumber(root.dataset.unitPrice || "");
 
-    if (!enabled || pricePerSqm === null || pricePerSqm <= 0) {
+    if (!enabled || fallbackUnitPrice === null || fallbackUnitPrice <= 0) {
       return;
     }
 
@@ -100,7 +145,9 @@
     const currency = root.dataset.currency || "USD";
     const locale = root.dataset.locale || "en-US";
     const currencyFormatter = getCurrencyFormatter(locale, currency);
+    const variantPrices = getVariantPrices(root);
     const boundForms = new WeakSet();
+    const boundVariantInputs = new WeakSet();
 
     function setError(message) {
       errorOutput.textContent = message;
@@ -111,7 +158,7 @@
       totalOutput.textContent = currencyFormatter.format(totalValue);
     }
 
-    function getMeasurement() {
+    function getMeasurement(unitPrice) {
       const length = parseNumber(lengthInput.value);
       const width = parseNumber(widthInput.value);
 
@@ -143,8 +190,15 @@
         };
       }
 
+      if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+        return {
+          valid: false,
+          error: "Selected variant has no valid base price.",
+        };
+      }
+
       const area = round(length * width, 4);
-      const totalPrice = round(area * pricePerSqm, 2);
+      const totalPrice = round(area * unitPrice, 2);
 
       if (area <= 0 || totalPrice <= 0) {
         return {
@@ -173,7 +227,10 @@
       boundForms.add(form);
 
       form.addEventListener("submit", (event) => {
-        const measurement = getMeasurement();
+        const forms = findProductForms(root);
+        const unitPrice = getActiveUnitPrice(forms, fallbackUnitPrice, variantPrices);
+        const measurement = getMeasurement(unitPrice);
+
         if (!measurement.valid) {
           event.preventDefault();
           setError(measurement.error);
@@ -185,8 +242,21 @@
       });
     }
 
+    function bindVariantChangeRefresh(form, refresh) {
+      const variantInputs = form.querySelectorAll('[name="id"]');
+      variantInputs.forEach((variantInput) => {
+        if (boundVariantInputs.has(variantInput)) return;
+        boundVariantInputs.add(variantInput);
+        variantInput.addEventListener("change", refresh);
+        variantInput.addEventListener("input", refresh);
+      });
+    }
+
     function refresh() {
-      const measurement = getMeasurement();
+      const forms = findProductForms(root);
+      const unitPrice = getActiveUnitPrice(forms, fallbackUnitPrice, variantPrices);
+      const measurement = getMeasurement(unitPrice);
+
       if (!measurement.valid) {
         setError(measurement.error);
         updateSummary(0, 0);
@@ -195,9 +265,9 @@
         updateSummary(measurement.area, measurement.totalPrice);
       }
 
-      const forms = findProductForms(root);
       forms.forEach((form) => {
         bindFormValidation(form);
+        bindVariantChangeRefresh(form, refresh);
         if (measurement.valid) {
           applyPropertiesToForm(form, measurement);
         }

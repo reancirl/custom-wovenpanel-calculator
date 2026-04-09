@@ -3,8 +3,9 @@ api_version = "2026-01"
 [[extensions]]
 name = "sqm-pricing-function"
 handle = "sqm-pricing-function"
+uid = "403eb3a9-c48d-8a13-6842-19bf77e44fcb9217ecc8"
 type = "function"
-description = "Adjust line pricing from length x width x price per sqm"
+description = "Adjust line pricing from length x width x variant base price"
 
   [[extensions.targeting]]
   target = "cart.transform.run"

@@ -36,15 +36,6 @@ description = "Turns on length x width area pricing for this product"
   admin = "merchant_read_write"
   storefront = "public_read"
 
-[product.metafields.custom.price_per_sqm]
-type = "number_decimal"
-name = "Price per SQM"
-description = "Price multiplier used with the customer-entered area"
-
-  [product.metafields.custom.price_per_sqm.access]
-  admin = "merchant_read_write"
-  storefront = "public_read"
-
 [product.metafields.custom.min_length]
 type = "number_decimal"
 name = "Minimum length (m)"

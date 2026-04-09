@@ -2,6 +2,11 @@ query CartTransformRunInput {
   cart {
     lines {
       id
+      cost {
+        amountPerQuantity {
+          amount
+        }
+      }
       length: attribute(key: "length") {
         value
       }
@@ -17,9 +22,6 @@ query CartTransformRunInput {
           id
           product {
             enableSqmPricing: metafield(namespace: "custom", key: "enable_sqm_pricing") {
-              value
-            }
-            pricePerSqm: metafield(namespace: "custom", key: "price_per_sqm") {
               value
             }
             minLength: metafield(namespace: "custom", key: "min_length") {

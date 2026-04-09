@@ -91,12 +91,12 @@ export function cartTransformRun(input) {
     const enableSqmPricing = parseBoolean(product.enableSqmPricing?.value);
     if (!enableSqmPricing) continue;
 
-    const pricePerSqm = parsePositiveDecimal(product.pricePerSqm?.value);
-    if (pricePerSqm === null) continue;
-
     const length = parsePositiveDecimal(line.length?.value);
     const width = parsePositiveDecimal(line.width?.value);
     if (length === null || width === null) continue;
+
+    const baseUnitPrice = parsePositiveDecimal(line.cost?.amountPerQuantity?.amount);
+    if (baseUnitPrice === null) continue;
 
     const minLength = parsePositiveDecimal(product.minLength?.value) ?? DEFAULT_MIN_LENGTH;
     const maxLength = parsePositiveDecimal(product.maxLength?.value) ?? DEFAULT_MAX_LENGTH;
@@ -119,7 +119,7 @@ export function cartTransformRun(input) {
 
     if (!Number.isFinite(area) || area <= 0) continue;
 
-    const newUnitPrice = area * pricePerSqm;
+    const newUnitPrice = area * baseUnitPrice;
     if (!Number.isFinite(newUnitPrice) || newUnitPrice <= 0) continue;
 
     operations.push({

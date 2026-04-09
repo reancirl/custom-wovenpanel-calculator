@@ -7,6 +7,11 @@
         "lines": [
           {
             "id": "gid://shopify/CartLine/1",
+            "cost": {
+              "amountPerQuantity": {
+                "amount": "100.00"
+              }
+            },
             "length": {
               "value": "2"
             },
@@ -23,7 +28,6 @@
                 "enableSqmPricing": {
                   "value": "false"
                 },
-                "pricePerSqm": null,
                 "minLength": null,
                 "maxLength": null,
                 "minWidth": null,

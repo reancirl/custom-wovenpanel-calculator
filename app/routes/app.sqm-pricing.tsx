@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
@@ -8,7 +9,6 @@ type ProductConfig = {
   handle: string;
   status: string;
   enableSqmPricing: boolean;
-  pricePerSqm: string;
   minLength: string;
   maxLength: string;
   minWidth: string;
@@ -21,12 +21,10 @@ type LoaderData = {
 
 type ActionData = {
   ok: boolean;
-  productId?: string;
   message: string;
 };
 
 type ProductMetafieldNode = {
-  key: string;
   value: string | null;
 } | null;
 
@@ -35,39 +33,56 @@ type ProductNode = {
   title: string;
   handle: string;
   status: string;
-  metafields: ProductMetafieldNode[];
+  enableSqmPricing: ProductMetafieldNode;
+  minLength: ProductMetafieldNode;
+  maxLength: ProductMetafieldNode;
+  minWidth: ProductMetafieldNode;
+  maxWidth: ProductMetafieldNode;
 };
 
 type ProductEdge = {
   node: ProductNode;
 };
 
+type RowState = {
+  key: string;
+  productQuery: string;
+  productId: string;
+  minLength: string;
+  maxLength: string;
+  minWidth: string;
+  maxWidth: string;
+};
+
 const DEFAULT_MIN_LENGTH = "0.1";
 const DEFAULT_MAX_LENGTH = "100";
 const DEFAULT_MIN_WIDTH = "0.1";
 const DEFAULT_MAX_WIDTH = "100";
-const DEFAULT_PRICE_PER_SQM = "500";
+const METAFIELDS_SET_BATCH_LIMIT = 25;
+const MAX_PRODUCT_MATCH_OPTIONS = 80;
 
 const PRODUCT_QUERY = `#graphql
   query SqmPricingProducts {
-    products(first: 50, sortKey: UPDATED_AT, reverse: true) {
+    products(first: 250, sortKey: TITLE) {
       edges {
         node {
           id
           title
           handle
           status
-          metafields(
-            identifiers: [
-              { namespace: "custom", key: "enable_sqm_pricing" }
-              { namespace: "custom", key: "price_per_sqm" }
-              { namespace: "custom", key: "min_length" }
-              { namespace: "custom", key: "max_length" }
-              { namespace: "custom", key: "min_width" }
-              { namespace: "custom", key: "max_width" }
-            ]
-          ) {
-            key
+          enableSqmPricing: metafield(namespace: "custom", key: "enable_sqm_pricing") {
+            value
+          }
+          minLength: metafield(namespace: "custom", key: "min_length") {
+            value
+          }
+          maxLength: metafield(namespace: "custom", key: "max_length") {
+            value
+          }
+          minWidth: metafield(namespace: "custom", key: "min_width") {
+            value
+          }
+          maxWidth: metafield(namespace: "custom", key: "max_width") {
             value
           }
         }
@@ -79,10 +94,6 @@ const PRODUCT_QUERY = `#graphql
 const SET_METAFIELDS_MUTATION = `#graphql
   mutation SetSqmMetafields($metafields: [MetafieldsSetInput!]!) {
     metafieldsSet(metafields: $metafields) {
-      metafields {
-        id
-        key
-      }
       userErrors {
         field
         message
@@ -91,13 +102,13 @@ const SET_METAFIELDS_MUTATION = `#graphql
   }
 `;
 
-function parseDecimal(value: FormDataEntryValue | null): number | null {
+function parsePositiveDecimal(value: FormDataEntryValue | null): number | null {
   if (value === null) return null;
   const normalized = String(value).trim();
   if (!normalized) return null;
 
   const parsed = Number.parseFloat(normalized);
-  if (!Number.isFinite(parsed)) return null;
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
 
   return parsed;
 }
@@ -107,161 +118,236 @@ function toDecimalString(value: number): string {
   return rounded.toString();
 }
 
-function toMetafieldMap(metafields: ProductMetafieldNode[]): Record<string, string> {
-  return metafields.reduce<Record<string, string>>((accumulator, metafield) => {
-    if (metafield?.key && typeof metafield.value === "string") {
-      accumulator[metafield.key] = metafield.value;
-    }
-
-    return accumulator;
-  }, {});
+function buildProductLabel(product: ProductConfig): string {
+  return `${product.title} (${product.handle})`;
 }
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+function createEmptyRow(key: string): RowState {
+  return {
+    key,
+    productQuery: "",
+    productId: "",
+    minLength: DEFAULT_MIN_LENGTH,
+    maxLength: DEFAULT_MAX_LENGTH,
+    minWidth: DEFAULT_MIN_WIDTH,
+    maxWidth: DEFAULT_MAX_WIDTH,
+  };
+}
 
+function buildInitialRows(products: ProductConfig[]): RowState[] {
+  const enabledRows = products
+    .filter((product) => product.enableSqmPricing)
+    .map((product, index) => ({
+      key: `enabled-${index}-${product.id}`,
+      productQuery: buildProductLabel(product),
+      productId: product.id,
+      minLength: product.minLength || DEFAULT_MIN_LENGTH,
+      maxLength: product.maxLength || DEFAULT_MAX_LENGTH,
+      minWidth: product.minWidth || DEFAULT_MIN_WIDTH,
+      maxWidth: product.maxWidth || DEFAULT_MAX_WIDTH,
+    }));
+
+  return enabledRows.length > 0 ? enabledRows : [createEmptyRow("row-0")];
+}
+
+function chunkArray<T>(values: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+
+  return chunks;
+}
+
+async function fetchProducts(admin: { graphql: Function }): Promise<ProductConfig[]> {
   const response = await admin.graphql(PRODUCT_QUERY);
   const responseJson = await response.json();
   const edges = (responseJson.data?.products?.edges ?? []) as ProductEdge[];
 
-  const products: ProductConfig[] = edges.map((edge) => {
+  return edges.map((edge) => {
     const node = edge.node;
-    const metafieldMap = toMetafieldMap(node.metafields ?? []);
 
     return {
       id: node.id,
       title: node.title,
       handle: node.handle,
       status: node.status,
-      enableSqmPricing: metafieldMap.enable_sqm_pricing === "true",
-      pricePerSqm: metafieldMap.price_per_sqm ?? DEFAULT_PRICE_PER_SQM,
-      minLength: metafieldMap.min_length ?? DEFAULT_MIN_LENGTH,
-      maxLength: metafieldMap.max_length ?? DEFAULT_MAX_LENGTH,
-      minWidth: metafieldMap.min_width ?? DEFAULT_MIN_WIDTH,
-      maxWidth: metafieldMap.max_width ?? DEFAULT_MAX_WIDTH,
+      enableSqmPricing: node.enableSqmPricing?.value === "true",
+      minLength: node.minLength?.value ?? DEFAULT_MIN_LENGTH,
+      maxLength: node.maxLength?.value ?? DEFAULT_MAX_LENGTH,
+      minWidth: node.minWidth?.value ?? DEFAULT_MIN_WIDTH,
+      maxWidth: node.maxWidth?.value ?? DEFAULT_MAX_WIDTH,
     };
   });
+}
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { admin } = await authenticate.admin(request);
+  const products = await fetchProducts(admin);
 
   return { products } satisfies LoaderData;
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
-
   const formData = await request.formData();
-  const productId = String(formData.get("productId") ?? "").trim();
 
-  if (!productId) {
-    return {
-      ok: false,
-      message: "Missing product ID.",
-    } satisfies ActionData;
+  const rowProductIds = formData.getAll("rowProductId").map((value) => String(value).trim());
+  const rowProductQueries = formData
+    .getAll("rowProductQuery")
+    .map((value) => String(value).trim());
+  const rowMinLengths = formData.getAll("rowMinLength");
+  const rowMaxLengths = formData.getAll("rowMaxLength");
+  const rowMinWidths = formData.getAll("rowMinWidth");
+  const rowMaxWidths = formData.getAll("rowMaxWidth");
+
+  const products = await fetchProducts(admin);
+  const productMap = new Map(products.map((product) => [product.id, product]));
+
+  const selectedRows = new Map<
+    string,
+    { minLength: number; maxLength: number; minWidth: number; maxWidth: number }
+  >();
+
+  for (let index = 0; index < rowProductIds.length; index += 1) {
+    const productId = rowProductIds[index] ?? "";
+    const productQuery = rowProductQueries[index] ?? "";
+
+    if (!productId) {
+      if (productQuery) {
+        return {
+          ok: false,
+          message: `Row ${index + 1}: choose a product from the dropdown after searching.`,
+        } satisfies ActionData;
+      }
+      continue;
+    }
+
+    if (!productMap.has(productId)) {
+      return {
+        ok: false,
+        message: `Row ${index + 1}: selected product is not valid anymore.`,
+      } satisfies ActionData;
+    }
+
+    if (selectedRows.has(productId)) {
+      return {
+        ok: false,
+        message: `Row ${index + 1}: duplicate product selected. Keep one row per product.`,
+      } satisfies ActionData;
+    }
+
+    const minLength = parsePositiveDecimal(rowMinLengths[index] ?? null);
+    const maxLength = parsePositiveDecimal(rowMaxLengths[index] ?? null);
+    const minWidth = parsePositiveDecimal(rowMinWidths[index] ?? null);
+    const maxWidth = parsePositiveDecimal(rowMaxWidths[index] ?? null);
+
+    if (minLength === null || maxLength === null || minWidth === null || maxWidth === null) {
+      return {
+        ok: false,
+        message: `Row ${index + 1}: min/max values must be valid numbers greater than 0.`,
+      } satisfies ActionData;
+    }
+
+    if (minLength > maxLength || minWidth > maxWidth) {
+      return {
+        ok: false,
+        message: `Row ${index + 1}: minimum values must be less than or equal to maximum values.`,
+      } satisfies ActionData;
+    }
+
+    selectedRows.set(productId, {
+      minLength,
+      maxLength,
+      minWidth,
+      maxWidth,
+    });
   }
 
-  const enableSqmPricing = String(formData.get("enableSqmPricing") ?? "false") === "true";
+  const metafieldsToSet: Array<{
+    ownerId: string;
+    namespace: string;
+    key: string;
+    type: string;
+    value: string;
+  }> = [];
 
-  const pricePerSqm = parseDecimal(formData.get("pricePerSqm"));
-  const minLength = parseDecimal(formData.get("minLength"));
-  const maxLength = parseDecimal(formData.get("maxLength"));
-  const minWidth = parseDecimal(formData.get("minWidth"));
-  const maxWidth = parseDecimal(formData.get("maxWidth"));
+  products.forEach((product) => {
+    const selected = selectedRows.get(product.id);
 
-  if (pricePerSqm === null || pricePerSqm <= 0) {
-    return {
-      ok: false,
-      productId,
-      message: "Price per sqm must be a valid number greater than 0.",
-    } satisfies ActionData;
-  }
+    if (selected) {
+      metafieldsToSet.push(
+        {
+          ownerId: product.id,
+          namespace: "custom",
+          key: "enable_sqm_pricing",
+          type: "boolean",
+          value: "true",
+        },
+        {
+          ownerId: product.id,
+          namespace: "custom",
+          key: "min_length",
+          type: "number_decimal",
+          value: toDecimalString(selected.minLength),
+        },
+        {
+          ownerId: product.id,
+          namespace: "custom",
+          key: "max_length",
+          type: "number_decimal",
+          value: toDecimalString(selected.maxLength),
+        },
+        {
+          ownerId: product.id,
+          namespace: "custom",
+          key: "min_width",
+          type: "number_decimal",
+          value: toDecimalString(selected.minWidth),
+        },
+        {
+          ownerId: product.id,
+          namespace: "custom",
+          key: "max_width",
+          type: "number_decimal",
+          value: toDecimalString(selected.maxWidth),
+        },
+      );
+      return;
+    }
 
-  if (minLength === null || minLength <= 0 || maxLength === null || maxLength <= 0) {
-    return {
-      ok: false,
-      productId,
-      message: "Length limits must be valid numbers greater than 0.",
-    } satisfies ActionData;
-  }
-
-  if (minWidth === null || minWidth <= 0 || maxWidth === null || maxWidth <= 0) {
-    return {
-      ok: false,
-      productId,
-      message: "Width limits must be valid numbers greater than 0.",
-    } satisfies ActionData;
-  }
-
-  if (minLength > maxLength || minWidth > maxWidth) {
-    return {
-      ok: false,
-      productId,
-      message: "Minimum values must be less than or equal to maximum values.",
-    } satisfies ActionData;
-  }
-
-  const metafields = [
-    {
-      ownerId: productId,
-      namespace: "custom",
-      key: "enable_sqm_pricing",
-      type: "boolean",
-      value: enableSqmPricing ? "true" : "false",
-    },
-    {
-      ownerId: productId,
-      namespace: "custom",
-      key: "price_per_sqm",
-      type: "number_decimal",
-      value: toDecimalString(pricePerSqm),
-    },
-    {
-      ownerId: productId,
-      namespace: "custom",
-      key: "min_length",
-      type: "number_decimal",
-      value: toDecimalString(minLength),
-    },
-    {
-      ownerId: productId,
-      namespace: "custom",
-      key: "max_length",
-      type: "number_decimal",
-      value: toDecimalString(maxLength),
-    },
-    {
-      ownerId: productId,
-      namespace: "custom",
-      key: "min_width",
-      type: "number_decimal",
-      value: toDecimalString(minWidth),
-    },
-    {
-      ownerId: productId,
-      namespace: "custom",
-      key: "max_width",
-      type: "number_decimal",
-      value: toDecimalString(maxWidth),
-    },
-  ];
-
-  const response = await admin.graphql(SET_METAFIELDS_MUTATION, {
-    variables: { metafields },
+    if (product.enableSqmPricing) {
+      metafieldsToSet.push({
+        ownerId: product.id,
+        namespace: "custom",
+        key: "enable_sqm_pricing",
+        type: "boolean",
+        value: "false",
+      });
+    }
   });
 
-  const responseJson = await response.json();
-  const userErrors = responseJson.data?.metafieldsSet?.userErrors ?? [];
+  for (const batch of chunkArray(metafieldsToSet, METAFIELDS_SET_BATCH_LIMIT)) {
+    if (batch.length === 0) continue;
 
-  if (userErrors.length > 0) {
-    return {
-      ok: false,
-      productId,
-      message: userErrors[0]?.message ?? "Unable to save SQM settings.",
-    } satisfies ActionData;
+    const response = await admin.graphql(SET_METAFIELDS_MUTATION, {
+      variables: { metafields: batch },
+    });
+    const responseJson = await response.json();
+    const userErrors = responseJson.data?.metafieldsSet?.userErrors ?? [];
+
+    if (userErrors.length > 0) {
+      return {
+        ok: false,
+        message: userErrors[0]?.message ?? "Unable to save calculator rows.",
+      } satisfies ActionData;
+    }
   }
 
   return {
     ok: true,
-    productId,
-    message: "SQM pricing settings saved.",
+    message: `Saved. ${selectedRows.size} product row(s) are now using the calculator.`,
   } satisfies ActionData;
 };
 
@@ -269,155 +355,229 @@ export default function SqmPricingPage() {
   const { products } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
-  const submittingProductId = navigation.formData?.get("productId")?.toString();
+  const isSubmitting = navigation.state === "submitting";
+
+  const productsWithLabel = useMemo(
+    () =>
+      products.map((product) => ({
+        ...product,
+        label: buildProductLabel(product),
+      })),
+    [products],
+  );
+
+  const productIdByLabel = useMemo(
+    () => new Map(productsWithLabel.map((entry) => [entry.label, entry.id])),
+    [productsWithLabel],
+  );
+
+  const productById = useMemo(
+    () => new Map(productsWithLabel.map((entry) => [entry.id, entry])),
+    [productsWithLabel],
+  );
+
+  const [rows, setRows] = useState<RowState[]>(() => buildInitialRows(products));
+
+  useEffect(() => {
+    setRows(buildInitialRows(products));
+  }, [products]);
+
+  function updateRow(key: string, updater: (row: RowState) => RowState) {
+    setRows((currentRows) =>
+      currentRows.map((row) => {
+        if (row.key !== key) return row;
+        return updater(row);
+      }),
+    );
+  }
+
+  function addRow() {
+    setRows((currentRows) => {
+      const nextIndex = currentRows.length;
+      return [...currentRows, createEmptyRow(`row-${nextIndex}-${Date.now()}`)];
+    });
+  }
+
+  function removeRow(key: string) {
+    setRows((currentRows) => {
+      const filteredRows = currentRows.filter((row) => row.key !== key);
+      return filteredRows.length > 0 ? filteredRows : [createEmptyRow("row-0")];
+    });
+  }
 
   return (
-    <s-page heading="SQM pricing configuration">
+    <s-page heading="Publish Calculator Rows">
       <s-section>
         <s-paragraph>
-          Configure per-product area pricing using product metafields in the <code>custom</code>
-          namespace. The cart transform function applies this only when
-          <code> custom.enable_sqm_pricing </code>
-          is true.
+          Add one row per product. Search the product, choose it from the dropdown, then set
+          min/max dimensions.
         </s-paragraph>
       </s-section>
 
       {actionData && (
         <s-section>
-          <div
-            style={{
-              border: "1px solid #d1d5db",
-              borderRadius: "12px",
-              padding: "12px 16px",
-              background: actionData.ok ? "#e8f7ee" : "#fdecec",
-              color: actionData.ok ? "#0f5132" : "#842029",
-            }}
+          <s-banner
+            tone={actionData.ok ? "success" : "critical"}
+            heading={actionData.ok ? "Rows saved" : "Unable to save rows"}
           >
-            {actionData.message}
-          </div>
+            <s-paragraph>{actionData.message}</s-paragraph>
+          </s-banner>
         </s-section>
       )}
 
-      <s-section heading="Products">
-        <div
-          style={{
-            display: "grid",
-            gap: "16px",
-          }}
-        >
-          {products.map((product) => {
-            const isSubmitting = submittingProductId === product.id;
+      <s-section heading="Calculator Rows">
+        <Form method="post">
+          <s-stack direction="block" gap="base">
+            {rows.map((row, index) => {
+              const normalizedQuery = row.productQuery.trim().toLowerCase();
+              const searchMatches = productsWithLabel
+                .filter((product) => {
+                  if (!normalizedQuery) return true;
+                  const haystack = `${product.title} ${product.handle}`.toLowerCase();
+                  return haystack.includes(normalizedQuery);
+                })
+                .slice(0, MAX_PRODUCT_MATCH_OPTIONS);
 
-            return (
-              <Form
-                key={product.id}
-                method="post"
-                style={{
-                  border: "1px solid #d1d5db",
-                  borderRadius: "12px",
-                  padding: "16px",
-                  display: "grid",
-                  gap: "12px",
-                }}
-              >
-                <input type="hidden" name="productId" value={product.id} />
+              const selectedProduct = row.productId ? productById.get(row.productId) : undefined;
+              const hasSelectedInMatches = selectedProduct
+                ? searchMatches.some((product) => product.id === selectedProduct.id)
+                : false;
 
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
-                  <div>
-                    <strong>{product.title}</strong>
-                    <div>
-                      <small>
-                        {product.handle} • {product.status}
-                      </small>
-                    </div>
-                  </div>
-                </div>
+              const selectOptions = selectedProduct && !hasSelectedInMatches
+                ? [selectedProduct, ...searchMatches]
+                : searchMatches;
 
-                <label style={{ display: "grid", gap: "6px" }}>
-                  <span>Enable SQM pricing</span>
-                  <select name="enableSqmPricing" defaultValue={String(product.enableSqmPricing)}>
-                    <option value="true">Enabled</option>
-                    <option value="false">Disabled</option>
-                  </select>
-                </label>
+              return (
+                <s-box key={row.key} border="base" borderRadius="base" padding="base">
+                  <s-stack direction="block" gap="base">
+                    <s-heading>Row {index + 1}</s-heading>
 
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                    gap: "10px",
-                  }}
-                >
-                  <label style={{ display: "grid", gap: "6px" }}>
-                    <span>Price per sqm</span>
-                    <input
-                      name="pricePerSqm"
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      defaultValue={product.pricePerSqm}
-                      required
-                    />
-                  </label>
+                    <s-grid gap="base" gridTemplateColumns="repeat(auto-fit, minmax(18rem, 1fr))">
+                      <s-search-field
+                        label="Product search"
+                        value={row.productQuery}
+                        placeholder="Type title or handle"
+                        onInput={(event: Event) => {
+                          const nextQuery = (event.currentTarget as HTMLInputElement).value;
+                          const exactMatchProductId = productIdByLabel.get(nextQuery) ?? "";
 
-                  <label style={{ display: "grid", gap: "6px" }}>
-                    <span>Min length (m)</span>
-                    <input
-                      name="minLength"
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      defaultValue={product.minLength}
-                      required
-                    />
-                  </label>
+                          updateRow(row.key, (currentRow) => ({
+                            ...currentRow,
+                            productQuery: nextQuery,
+                            productId: exactMatchProductId,
+                          }));
+                        }}
+                      />
 
-                  <label style={{ display: "grid", gap: "6px" }}>
-                    <span>Max length (m)</span>
-                    <input
-                      name="maxLength"
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      defaultValue={product.maxLength}
-                      required
-                    />
-                  </label>
+                      <s-select
+                        label="Choose product"
+                        value={row.productId}
+                        placeholder="Select product"
+                        onInput={(event: Event) => {
+                          const nextProductId = (event.currentTarget as HTMLInputElement).value;
+                          const selected = productById.get(nextProductId);
 
-                  <label style={{ display: "grid", gap: "6px" }}>
-                    <span>Min width (m)</span>
-                    <input
-                      name="minWidth"
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      defaultValue={product.minWidth}
-                      required
-                    />
-                  </label>
+                          updateRow(row.key, (currentRow) => ({
+                            ...currentRow,
+                            productId: nextProductId,
+                            productQuery: selected ? selected.label : currentRow.productQuery,
+                          }));
+                        }}
+                      >
+                        <s-option value="">Select product</s-option>
+                        {selectOptions.map((product) => (
+                          <s-option key={`${row.key}-${product.id}`} value={product.id}>
+                            {product.label}
+                          </s-option>
+                        ))}
+                      </s-select>
+                    </s-grid>
 
-                  <label style={{ display: "grid", gap: "6px" }}>
-                    <span>Max width (m)</span>
-                    <input
-                      name="maxWidth"
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      defaultValue={product.maxWidth}
-                      required
-                    />
-                  </label>
-                </div>
+                    <s-grid gap="base" gridTemplateColumns="repeat(auto-fit, minmax(12rem, 1fr))">
+                      <s-number-field
+                        label="Min length (m)"
+                        min="0.01"
+                        step="0.01"
+                        value={row.minLength}
+                        onInput={(event: Event) => {
+                          const nextValue = (event.currentTarget as HTMLInputElement).value;
+                          updateRow(row.key, (currentRow) => ({
+                            ...currentRow,
+                            minLength: nextValue,
+                          }));
+                        }}
+                      />
 
-                <div>
-                  <button type="submit" disabled={isSubmitting}>
-                    {isSubmitting ? "Saving..." : "Save SQM settings"}
-                  </button>
-                </div>
-              </Form>
-            );
-          })}
-        </div>
+                      <s-number-field
+                        label="Max length (m)"
+                        min="0.01"
+                        step="0.01"
+                        value={row.maxLength}
+                        onInput={(event: Event) => {
+                          const nextValue = (event.currentTarget as HTMLInputElement).value;
+                          updateRow(row.key, (currentRow) => ({
+                            ...currentRow,
+                            maxLength: nextValue,
+                          }));
+                        }}
+                      />
+
+                      <s-number-field
+                        label="Min width (m)"
+                        min="0.01"
+                        step="0.01"
+                        value={row.minWidth}
+                        onInput={(event: Event) => {
+                          const nextValue = (event.currentTarget as HTMLInputElement).value;
+                          updateRow(row.key, (currentRow) => ({
+                            ...currentRow,
+                            minWidth: nextValue,
+                          }));
+                        }}
+                      />
+
+                      <s-number-field
+                        label="Max width (m)"
+                        min="0.01"
+                        step="0.01"
+                        value={row.maxWidth}
+                        onInput={(event: Event) => {
+                          const nextValue = (event.currentTarget as HTMLInputElement).value;
+                          updateRow(row.key, (currentRow) => ({
+                            ...currentRow,
+                            maxWidth: nextValue,
+                          }));
+                        }}
+                      />
+                    </s-grid>
+
+                    <s-button type="button" variant="secondary" tone="critical" onClick={() => removeRow(row.key)}>
+                      Remove row {index + 1}
+                    </s-button>
+
+                    <input type="hidden" name="rowProductQuery" value={row.productQuery} />
+                    <input type="hidden" name="rowProductId" value={row.productId} />
+                    <input type="hidden" name="rowMinLength" value={row.minLength} />
+                    <input type="hidden" name="rowMaxLength" value={row.maxLength} />
+                    <input type="hidden" name="rowMinWidth" value={row.minWidth} />
+                    <input type="hidden" name="rowMaxWidth" value={row.maxWidth} />
+                  </s-stack>
+                </s-box>
+              );
+            })}
+          </s-stack>
+
+          <s-box paddingBlockStart="base">
+            <s-stack direction="inline" gap="base">
+              <s-button type="button" variant="secondary" onClick={addRow}>
+                Add row
+              </s-button>
+              <s-button type="submit" variant="primary" {...(isSubmitting ? { loading: true } : {})}>
+                Save rows
+              </s-button>
+            </s-stack>
+          </s-box>
+        </Form>
       </s-section>
     </s-page>
   );

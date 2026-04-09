@@ -1,36 +1,37 @@
 {% liquid
-  assign target_product = block.settings.product
-  if target_product == blank
-    assign target_product = product
-  endif
+  assign target_product = product
 
-  if target_product
-    assign enable_sqm_pricing = target_product.metafields.custom.enable_sqm_pricing.value
-    assign price_per_sqm = target_product.metafields.custom.price_per_sqm.value
-    assign min_length = target_product.metafields.custom.min_length.value | default: 0.1
-    assign max_length = target_product.metafields.custom.max_length.value | default: 100
-    assign min_width = target_product.metafields.custom.min_width.value | default: 0.1
-    assign max_width = target_product.metafields.custom.max_width.value | default: 100
+  if target_product != blank
+    assign enable_sqm_pricing_raw = target_product.metafields.custom.enable_sqm_pricing.value
+    assign enable_sqm_pricing = false
+    if enable_sqm_pricing_raw == true or enable_sqm_pricing_raw == 'true'
+      assign enable_sqm_pricing = true
+    endif
+
+    if enable_sqm_pricing
+      assign min_length = target_product.metafields.custom.min_length.value | default: 0.1
+      assign max_length = target_product.metafields.custom.max_length.value | default: 100
+      assign min_width = target_product.metafields.custom.min_width.value | default: 0.1
+      assign max_width = target_product.metafields.custom.max_width.value | default: 100
+      assign initial_variant = target_product.selected_or_first_available_variant
+      assign initial_unit_price = initial_variant.price | divided_by: 100.0
+    endif
   endif
 %}
 
-<div
-  class="sqm-pricing-block"
-  data-sqm-pricing
-  data-enabled="{{ enable_sqm_pricing | default: false }}"
-  data-price-per-sqm="{{ price_per_sqm | default: 0 }}"
-  data-min-length="{{ min_length }}"
-  data-max-length="{{ max_length }}"
-  data-min-width="{{ min_width }}"
-  data-max-width="{{ max_width }}"
-  data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
-  data-locale="{{ request.locale.iso_code | default: shop.locale | replace: '_', '-' }}"
->
-  {% if target_product == blank %}
-    <p class="sqm-pricing-block__message">Select a product to enable SQM pricing for this block.</p>
-  {% elsif enable_sqm_pricing != true %}
-    <p class="sqm-pricing-block__message">SQM pricing is disabled for this product.</p>
-  {% else %}
+{% if target_product != blank and enable_sqm_pricing %}
+  <div
+    class="sqm-pricing-block"
+    data-sqm-pricing
+    data-enabled="true"
+    data-unit-price="{{ initial_unit_price | default: 0 }}"
+    data-min-length="{{ min_length }}"
+    data-max-length="{{ max_length }}"
+    data-min-width="{{ min_width }}"
+    data-max-width="{{ max_width }}"
+    data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
+    data-locale="{{ request.locale.iso_code | default: shop.locale | replace: '_', '-' }}"
+  >
     <div class="sqm-pricing-block__field-grid">
       <label class="sqm-pricing-block__field">
         <span>Length (m)</span>
@@ -73,8 +74,23 @@
         <strong data-sqm-total>{{ 0 | money }}</strong>
       </p>
     </div>
-  {% endif %}
-</div>
+
+    <script type="application/json" data-sqm-variant-prices>
+      {
+        {% for variant in target_product.variants %}
+          "{{ variant.id }}": {{ variant.price | divided_by: 100.0 }}{% unless forloop.last %},{% endunless %}
+        {% endfor %}
+      }
+    </script>
+  </div>
+{% elsif request.design_mode %}
+  <div class="sqm-pricing-block">
+    <p class="sqm-pricing-block__message">
+      SQM calculator is hidden on this product because
+      <code>custom.enable_sqm_pricing</code> is not enabled.
+    </p>
+  </div>
+{% endif %}
 
 {% schema %}
 {
@@ -85,13 +101,6 @@
   },
   "stylesheet": "sqm-pricing.css",
   "javascript": "sqm-pricing.js",
-  "settings": [
-    {
-      "type": "product",
-      "id": "product",
-      "label": "Product",
-      "autofill": true
-    }
-  ]
+  "settings": []
 }
 {% endschema %}
