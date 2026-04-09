@@ -44,7 +44,7 @@
     "output": {
       "operations": [
         {
-          "expand": {
+          "lineExpand": {
             "cartLineId": "gid://shopify/CartLine/2",
             "expandedCartItems": [
               {

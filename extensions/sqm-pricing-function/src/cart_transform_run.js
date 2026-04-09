@@ -175,7 +175,7 @@ export function cartTransformRun(input) {
     ].filter(Boolean);
 
     operations.push({
-      expand: {
+      lineExpand: {
         cartLineId: line.id,
         expandedCartItems: [
           {
