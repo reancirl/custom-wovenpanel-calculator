@@ -17,6 +17,7 @@ const DEFAULT_MAX_LENGTH = 100;
 const DEFAULT_MIN_WIDTH = 0.1;
 const DEFAULT_MAX_WIDTH = 100;
 const AREA_TOLERANCE = 0.01;
+const MM_PER_METER = 1000;
 
 /**
  * @param {string | null | undefined} value
@@ -47,6 +48,20 @@ function parsePositiveDecimal(value) {
  */
 function parseBoolean(value) {
   return value === "true";
+}
+
+/**
+ * @param {string | null | undefined} metersValue
+ * @param {string | null | undefined} millimetersValue
+ */
+function parseMetersFromAttribute(metersValue, millimetersValue) {
+  const meters = parsePositiveDecimal(metersValue);
+  if (meters !== null) return meters;
+
+  const millimeters = parsePositiveDecimal(millimetersValue);
+  if (millimeters === null) return null;
+
+  return millimeters / MM_PER_METER;
 }
 
 /**
@@ -100,9 +115,10 @@ export function cartTransformRun(input) {
     const enableSqmPricing = parseBoolean(product.enableSqmPricing?.value);
     if (!enableSqmPricing) continue;
 
-    const length = parsePositiveDecimal(line.length?.value);
-    const width = parsePositiveDecimal(line.width?.value);
-    if (length === null || width === null) continue;
+    const length = parseMetersFromAttribute(line.length?.value, line.lengthMm?.value);
+    const width = parseMetersFromAttribute(line.width?.value, line.widthMm?.value);
+    const providedArea = parsePositiveDecimal(line.area?.value);
+    if ((length === null || width === null) && providedArea === null) continue;
 
     const baseUnitPrice = parsePositiveDecimal(line.cost?.amountPerQuantity?.amount);
     if (baseUnitPrice === null) continue;
@@ -113,29 +129,48 @@ export function cartTransformRun(input) {
     const maxWidth = parsePositiveDecimal(product.maxWidth?.value) ?? DEFAULT_MAX_WIDTH;
 
     if (
-      !isWithinRange(length, minLength, maxLength) ||
-      !isWithinRange(width, minWidth, maxWidth)
+      length !== null &&
+      width !== null &&
+      (!isWithinRange(length, minLength, maxLength) || !isWithinRange(width, minWidth, maxWidth))
     ) {
       continue;
     }
 
-    const calculatedArea = length * width;
-    const providedArea = parsePositiveDecimal(line.area?.value);
+    const calculatedArea = length !== null && width !== null ? length * width : null;
     const area =
-      providedArea !== null && areClose(providedArea, calculatedArea)
-        ? providedArea
+      providedArea !== null
+        ? calculatedArea !== null && !areClose(providedArea, calculatedArea)
+          ? calculatedArea
+          : providedArea
         : calculatedArea;
 
-    if (!Number.isFinite(area) || area <= 0) continue;
+    if (area === null || !Number.isFinite(area) || area <= 0) continue;
 
     const newUnitPrice = area * baseUnitPrice;
     if (!Number.isFinite(newUnitPrice) || newUnitPrice <= 0) continue;
 
+    const parsedLengthMm = parsePositiveDecimal(line.lengthMm?.value);
+    const parsedWidthMm = parsePositiveDecimal(line.widthMm?.value);
+
     const attributes = [
-      buildAttribute("length_mm", line.length?.value ? toMoneyString(length * 1000) : null),
-      buildAttribute("width_mm", line.width?.value ? toMoneyString(width * 1000) : null),
-      buildAttribute("length", line.length?.value),
-      buildAttribute("width", line.width?.value),
+      buildAttribute(
+        "length_mm",
+        parsedLengthMm !== null
+          ? toMoneyString(parsedLengthMm)
+          : length !== null
+            ? toMoneyString(length * MM_PER_METER)
+            : null,
+      ),
+      buildAttribute(
+        "width_mm",
+        parsedWidthMm !== null
+          ? toMoneyString(parsedWidthMm)
+          : width !== null
+            ? toMoneyString(width * MM_PER_METER)
+            : null,
+      ),
+      buildAttribute("length", line.length?.value ?? (length !== null ? toMoneyString(length) : null)),
+      buildAttribute("width", line.width?.value ?? (width !== null ? toMoneyString(width) : null)),
       buildAttribute("area", toMoneyString(area)),
     ].filter(Boolean);
 

@@ -1,0 +1,93 @@
+{
+  "payload": {
+    "export": "cart-transform-run",
+    "target": "cart.transform.run",
+    "input": {
+      "cart": {
+        "lines": [
+          {
+            "id": "gid://shopify/CartLine/1",
+            "quantity": 1,
+            "cost": {
+              "amountPerQuantity": {
+                "amount": "100.00"
+              }
+            },
+            "length": {
+              "value": "2"
+            },
+            "width": {
+              "value": "3"
+            },
+            "lengthMm": {
+              "value": "2000"
+            },
+            "widthMm": {
+              "value": "3000"
+            },
+            "area": {
+              "value": "6"
+            },
+            "merchandise": {
+              "__typename": "ProductVariant",
+              "id": "gid://shopify/ProductVariant/1",
+              "product": {
+                "enableSqmPricing": {
+                  "value": "true"
+                },
+                "minLength": null,
+                "maxLength": null,
+                "minWidth": null,
+                "maxWidth": null
+              }
+            }
+          }
+        ]
+      }
+    },
+    "output": {
+      "operations": [
+        {
+          "expand": {
+            "cartLineId": "gid://shopify/CartLine/1",
+            "expandedCartItems": [
+              {
+                "merchandiseId": "gid://shopify/ProductVariant/1",
+                "quantity": 1,
+                "attributes": [
+                  {
+                    "key": "length_mm",
+                    "value": "2000.00"
+                  },
+                  {
+                    "key": "width_mm",
+                    "value": "3000.00"
+                  },
+                  {
+                    "key": "length",
+                    "value": "2"
+                  },
+                  {
+                    "key": "width",
+                    "value": "3"
+                  },
+                  {
+                    "key": "area",
+                    "value": "6.00"
+                  }
+                ],
+                "price": {
+                  "adjustment": {
+                    "fixedPricePerUnit": {
+                      "amount": "600.00"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

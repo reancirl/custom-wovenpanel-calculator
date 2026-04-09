@@ -19,6 +19,12 @@
             "width": {
               "value": "3"
             },
+            "lengthMm": {
+              "value": "2000"
+            },
+            "widthMm": {
+              "value": "3000"
+            },
             "area": {
               "value": "6"
             },

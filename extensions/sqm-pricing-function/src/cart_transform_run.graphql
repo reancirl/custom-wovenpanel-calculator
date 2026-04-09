@@ -14,6 +14,12 @@ query CartTransformRunInput {
       width: attribute(key: "width") {
         value
       }
+      lengthMm: attribute(key: "length_mm") {
+        value
+      }
+      widthMm: attribute(key: "width_mm") {
+        value
+      }
       area: attribute(key: "area") {
         value
       }
