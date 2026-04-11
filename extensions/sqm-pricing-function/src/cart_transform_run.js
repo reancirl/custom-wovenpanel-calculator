@@ -18,6 +18,7 @@ const DEFAULT_MIN_WIDTH = 0.1;
 const DEFAULT_MAX_WIDTH = 100;
 const AREA_TOLERANCE = 0.01;
 const MM_PER_METER = 1000;
+const EXPANDED_ITEM_QUANTITY_PER_PARENT = 1;
 
 /**
  * @param {string | null | undefined} value
@@ -180,7 +181,9 @@ export function cartTransformRun(input) {
         expandedCartItems: [
           {
             merchandiseId: line.merchandise.id,
-            quantity: line.quantity,
+            // Expanded item quantity is per parent line unit. Using line.quantity here
+            // causes cart quantity to be applied twice.
+            quantity: EXPANDED_ITEM_QUANTITY_PER_PARENT,
             ...(attributes.length > 0 ? { attributes } : {}),
             price: {
               adjustment: {
