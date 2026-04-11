@@ -54,6 +54,14 @@
   outline-offset: 1px;
 }
 
+.sqm-pricing-block .sqm-pricing-block__limit {
+  margin: 0;
+  color: var(--sqm-muted);
+  font-size: clamp(0.92rem, 1.05vw, 1.08rem) !important;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
 .sqm-pricing-block__summary {
   margin-top: 0.85rem;
   display: grid;

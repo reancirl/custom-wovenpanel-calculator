@@ -13,6 +13,10 @@
       assign max_length = target_product.metafields.custom.max_length.value | default: 100
       assign min_width = target_product.metafields.custom.min_width.value | default: 0.1
       assign max_width = target_product.metafields.custom.max_width.value | default: 100
+      assign min_length_mm = min_length | times: 1000.0 | round: 2
+      assign max_length_mm = max_length | times: 1000.0 | round: 2
+      assign min_width_mm = min_width | times: 1000.0 | round: 2
+      assign max_width_mm = max_width | times: 1000.0 | round: 2
       assign initial_variant = target_product.selected_or_first_available_variant
       assign initial_unit_price = initial_variant.price | divided_by: 100.0
     endif
@@ -38,12 +42,15 @@
         <input
           type="number"
           inputmode="decimal"
-          min="{{ min_length | times: 1000.0 }}"
-          max="{{ max_length | times: 1000.0 }}"
+          min="{{ min_length_mm }}"
+          max="{{ max_length_mm }}"
           step="0.01"
           data-sqm-length
           required
         >
+        <small class="sqm-pricing-block__limit">
+          Min {{ min_length_mm }} mm | Max {{ max_length_mm }} mm
+        </small>
       </label>
 
       <label class="sqm-pricing-block__field">
@@ -51,12 +58,15 @@
         <input
           type="number"
           inputmode="decimal"
-          min="{{ min_width | times: 1000.0 }}"
-          max="{{ max_width | times: 1000.0 }}"
+          min="{{ min_width_mm }}"
+          max="{{ max_width_mm }}"
           step="0.01"
           data-sqm-width
           required
         >
+        <small class="sqm-pricing-block__limit">
+          Min {{ min_width_mm }} mm | Max {{ max_width_mm }} mm
+        </small>
       </label>
     </div>
 
