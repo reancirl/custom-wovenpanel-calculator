@@ -1,0 +1,450 @@
+<script>
+  function makeRelativeUrlMarketAware(relativeUrl) {
+    let formattedRelativeUrl = relativeUrl;
+  
+    if (relativeUrl.charAt(0) === '/') {
+      // Check if the first character is a "/" if true Remove the first character
+      formattedRelativeUrl = relativeUrl.substring(1);
+    }
+    const shopifyRootRoute = window.Shopify.routes.root;
+  
+    // If a store does not have a shopify routes.root key on their object we 
+    // default to the primary route and console log, as things might not be 
+    //market aware.
+    if (shopifyRootRoute) {
+      // Set the route with the market aware param
+      const marketAwareRoute = `${shopifyRootRoute}${formattedRelativeUrl}`;
+      return marketAwareRoute;
+    } else {
+      // Log that there is no root object, return primary market default
+      console.error(
+        'The shopify root route for the store is undefined or null, check that their theme as not reassign the Shopify.routes object. Using the primary market slug.'
+      );
+      return `/${formattedRelativeUrl}`;
+    }
+  }
+  /**
+   * Get content by URL and append it to the DOM
+   * @param {String} method
+   * @param {String} url
+   * @param {String} appendTo
+  **/
+  function appendContent(method, url, appendTo) {
+    return new Promise(function (resolve, reject) {
+      let xhr = new XMLHttpRequest();
+      xhr.open(method, url);
+      xhr.onload = function () {
+        if (this.status >= 200 && this.status < 300) {
+          document.getElementById(appendTo).innerHTML = this.responseText;
+          nodeScriptReplace(document.getElementById(appendTo));
+          return resolve(true);
+        } else {
+          reject({
+            status: this.status,
+            statusText: xhr.statusText
+          });
+        }
+      };
+      xhr.send();
+    });
+  }
+
+  function nodeScriptReplace(node) {
+    if (nodeScriptIs(node) === true) {
+      node.parentNode.replaceChild(nodeScriptClone(node), node);
+    }
+    else {
+      var i = -1, children = node.childNodes;
+      while (++i < children.length ) {
+        nodeScriptReplace( children[i] );
+      }
+  }
+    return node;
+  }
+
+  function nodeScriptClone(node){
+    var script  = document.createElement("script");
+    script.text = node.innerHTML;
+
+    var i = -1, attrs = node.attributes, attr;
+    while ( ++i < attrs.length ) {
+      script.setAttribute( (attr = attrs[i]).name, attr.value );
+    }
+    return script;
+  }
+
+  function nodeScriptIs(node) {
+    return node.tagName === 'SCRIPT';
+  }
+</script>
+
+{% assign wsgUrl = page.url | split:"/" | last %}
+{% case wsgUrl %}
+  {% when 'ws-account-create' %}
+    <div id="wsg-account-create" class='wsg-proxy-container'></div>
+
+    <script>
+      wsgRunSignup = true;
+      wsgRunProxy = true;
+
+      async function doAjax() {
+        // await code here
+        await appendContent("GET", makeRelativeUrlMarketAware('/a/wsg/proxy/ws-account-create'), "wsg-account-create");
+        setTexts();
+      }
+      document.addEventListener("DOMContentLoaded", function () {
+        doAjax();
+      }, { once: true });
+
+      function setTexts() {
+        document.getElementById('wsg-title').innerHTML = `{{ page.title }}`;
+
+        const wsgDefaultPageContent = 'Wholesale Gorilla';
+        if (`{{ page.content }}`.indexOf(wsgDefaultPageContent) === -1) {
+          document.getElementById('wsg-account-create-message').innerHTML = `{{ page.content }}`;
+        }
+      }
+    </script>
+
+  {% when 'ws-account-login' %}
+    <div id="wsg-login" class='wsg-proxy-container'></div>
+
+    <script>
+      async function doAjax() {
+        // await code here
+        await appendContent("GET", makeRelativeUrlMarketAware('/a/wsg/proxy/ws-account-login'), "wsg-login");
+        setTexts();
+
+      }
+      document.addEventListener("DOMContentLoaded", function () {
+        doAjax();
+      }, { once: true });
+      
+      function setTexts() {
+        document.getElementById('wsg-title').innerHTML = `{{ page.title }}`;
+
+        const wsgDefaultPageContent = 'Wholesale Gorilla';
+        if (`{{ page.content }}`.indexOf(wsgDefaultPageContent) === -1) {
+          document.getElementById('wsg-login-desc').innerHTML = `{{ page.content }}`;
+        }
+      }
+    </script>
+
+  {% when 'ws-quick-order-form' %}
+    <div id="wsg-quick-order-form" class='wsg-proxy-container'></div>
+    <script>
+      //includes polyfill
+      if (!String.prototype.includes) {
+        String.prototype.includes = function(search, start) {
+          'use strict';
+          if (typeof start !== 'number') {
+            start = 0;
+          }
+
+          if (start + search.length > this.length) {
+            return false;
+          } else {
+            return this.indexOf(search, start) !== -1;
+          }
+        };
+      }
+
+      var wsgRunSinglePageV2 = true;
+      wsgRunProxy = true;
+      var wsgProdArraySP = [];
+      var wsgProdIndex = 0;
+      var wsgDataSPTemp;
+      var wsgCartItems = {{ cart.items | json}}
+
+      const wsgUrlSearchParams = new URLSearchParams(window.location.search);
+      const wsgUrlParams = Object.fromEntries(wsgUrlSearchParams.entries());
+      const wsgQs = new URLSearchParams(wsgUrlParams).toString();
+      let wsgReqUrl = makeRelativeUrlMarketAware('/a/wsg/proxy/ws-quick-order-form');
+      if(wsgQs) wsgReqUrl += '?' + wsgQs;
+
+      var wsgCollectionId = wsgUrlParams.id || 0 //current collection id
+      var wsgPage = wsgUrlParams.page || 1; //index of current page in product loop pagination
+
+      document.addEventListener('DOMContentLoaded', async function () {
+        await appendContent('GET', wsgReqUrl, 'wsg-quick-order-form');
+        setTexts();
+      }, { once: true })
+
+      function setTexts() {
+        document.getElementById('wsg-title').innerHTML = `{{ page.title }}`;
+
+        const wsgDefaultPageContent = 'Wholesale Gorilla';
+        if (`{{ page.content }}`.indexOf(wsgDefaultPageContent) === -1) {
+          document.getElementById('wsg-quick-order-message').innerHTML = `{{ page.content }}`;
+        }
+      }
+    </script>
+  {% when 'ws-cart' %}
+    <!-- WSG CUSTOM create json of stock data -->
+    {% capture wsgStockData %}
+      {% for item in cart.items %}
+        "{{ item.key }}":{
+          "id": {{ item.id | json }},
+          "stock": {{ item.variant.inventory_quantity | json }},
+          "policy": {{ item.variant.inventory_policy | json }},
+          "shipDate": {{ item.variant.next_incoming_date | date: "%m/%d" | json }}
+        }{% unless forloop.last %},{% endunless %}
+      {% endfor %}
+    {% endcapture %}
+    <!-- END WSG CUSTOM -->
+
+    <div id="wsg-cart" class='wsg-proxy-container'></div>
+    <script>
+      var wsgCurrency = "{{ shop.currency }}";
+      //declare cart specific liquid variables
+      var wsgCustomerId = {{customer.id | json}};
+      var wsgCustomerAddresses = {{customer.addresses | json}};
+
+      var wsgCart = {{cart | json}};
+      var wsgShopCountry = {{shop.address.country | json}};
+      wsgRunCart = true;
+      wsgRunProxy = true;
+      var wsgStockData = {{wsgStockData | strip | json}};
+      var wsgShopLang = "{{request.locale.iso_code }}";
+
+      const wsgUrlSearchParams = new URLSearchParams(window.location.search);
+      const wsgUrlParams = Object.fromEntries(wsgUrlSearchParams.entries());
+      let wsgCartPage = wsgUrlParams.page || 1;
+      const wsgCartPaginationLimit = 20;
+      let wsgCartTotalPages = Math.ceil(wsgCart.items.length / wsgCartPaginationLimit);
+
+      function toMarketAwareUrl(rawUrl) {
+        if (!rawUrl) return "";
+        if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
+        if (rawUrl.indexOf('/cart/') === 0 || rawUrl.indexOf('cart/') === 0) {
+          return makeRelativeUrlMarketAware(rawUrl);
+        }
+        return rawUrl;
+      }
+
+      function getClosestAttributeValue(node, attrs) {
+        var current = node;
+        while (current && current !== document) {
+          for (var i = 0; i < attrs.length; i += 1) {
+            if (current.getAttribute) {
+              var value = current.getAttribute(attrs[i]);
+              if (value) return value;
+            }
+          }
+          current = current.parentElement;
+        }
+        return "";
+      }
+
+      function parseNumberLoose(value) {
+        if (typeof value !== 'string' && typeof value !== 'number') return null;
+        var parsed = Number.parseFloat(String(value).trim());
+        if (!Number.isFinite(parsed)) return null;
+        return parsed;
+      }
+
+      function parseMeasurementFromText(text, key) {
+        if (!text) return null;
+        var matcher = new RegExp(key + "\\s*:?\\s*([0-9]+(?:\\.[0-9]+)?)", 'i');
+        var match = text.match(matcher);
+        if (!match) return null;
+        return parseNumberLoose(match[1]);
+      }
+
+      function getMeasurementsFromRow(target) {
+        var row = target.closest('tr,li,.cart-item,.wsg-cart-item,.wsg-item-row,[data-cart-item]');
+        if (!row) return null;
+
+        var text = String(row.innerText || '').replace(/\s+/g, ' ');
+        var lengthMm = parseMeasurementFromText(text, 'length_mm');
+        var widthMm = parseMeasurementFromText(text, 'width_mm');
+        var length = parseMeasurementFromText(text, 'length');
+        var width = parseMeasurementFromText(text, 'width');
+        var area = parseMeasurementFromText(text, 'area');
+
+        if (
+          lengthMm === null &&
+          widthMm === null &&
+          length === null &&
+          width === null &&
+          area === null
+        ) {
+          return null;
+        }
+
+        return {
+          lengthMm: lengthMm,
+          widthMm: widthMm,
+          length: length,
+          width: width,
+          area: area,
+        };
+      }
+
+      function areNumbersClose(left, right, tolerance) {
+        if (left === null || right === null) return false;
+        return Math.abs(left - right) <= tolerance;
+      }
+
+      function findCartItemKeyByMeasurements(items, measurements) {
+        if (!Array.isArray(items) || !measurements) return '';
+
+        var candidates = items.filter(function (item) {
+          var properties = item && item.properties ? item.properties : {};
+          var itemLengthMm = parseNumberLoose(properties.length_mm);
+          var itemWidthMm = parseNumberLoose(properties.width_mm);
+          var itemLength = parseNumberLoose(properties.length);
+          var itemWidth = parseNumberLoose(properties.width);
+          var itemArea = parseNumberLoose(properties.area);
+
+          if (measurements.lengthMm !== null && itemLengthMm !== null && !areNumbersClose(measurements.lengthMm, itemLengthMm, 0.01)) return false;
+          if (measurements.widthMm !== null && itemWidthMm !== null && !areNumbersClose(measurements.widthMm, itemWidthMm, 0.01)) return false;
+          if (measurements.length !== null && itemLength !== null && !areNumbersClose(measurements.length, itemLength, 0.0001)) return false;
+          if (measurements.width !== null && itemWidth !== null && !areNumbersClose(measurements.width, itemWidth, 0.0001)) return false;
+          if (measurements.area !== null && itemArea !== null && !areNumbersClose(measurements.area, itemArea, 0.0001)) return false;
+
+          // If row includes a metric but cart line doesn't, don't treat as match.
+          if (measurements.lengthMm !== null && itemLengthMm === null) return false;
+          if (measurements.widthMm !== null && itemWidthMm === null) return false;
+          if (measurements.length !== null && itemLength === null) return false;
+          if (measurements.width !== null && itemWidth === null) return false;
+          if (measurements.area !== null && itemArea === null) return false;
+
+          return true;
+        });
+
+        if (candidates.length === 1) {
+          return candidates[0].key || '';
+        }
+
+        return '';
+      }
+
+      async function removeCartLine(itemKey, line) {
+        var body = new URLSearchParams();
+        if (itemKey) {
+          body.set('id', itemKey);
+        } else if (line) {
+          body.set('line', line);
+        } else {
+          return;
+        }
+        body.set('quantity', '0');
+
+        await fetch(makeRelativeUrlMarketAware('/cart/change.js'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Accept': 'application/json'
+          },
+          credentials: 'same-origin',
+          body: body.toString()
+        });
+      }
+
+      function installWsgSafeRemoveHandler() {
+        var container = document.getElementById('wsg-cart');
+        if (!container || container.dataset.wsgSafeRemoveBound === 'true') return;
+        container.dataset.wsgSafeRemoveBound = 'true';
+
+        container.addEventListener('click', function (event) {
+          var target = event.target && event.target.closest
+            ? event.target.closest("a,button,[role='button']")
+            : null;
+          if (!target) return;
+
+          var href = target.getAttribute('href') || '';
+          var isRemoveHref =
+            /\/cart\/change/i.test(href) &&
+            /(?:^|[?&])quantity=0(?:&|$)/i.test(href);
+
+          var rawLine = '';
+          if (isRemoveHref) {
+            try {
+              var changeUrl = new URL(href, window.location.origin);
+              rawLine = changeUrl.searchParams.get('line') || '';
+            } catch (error) {
+              rawLine = '';
+            }
+          }
+
+          if (isRemoveHref) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+
+          var isLikelyRemoveButton =
+            target.matches("[name='remove'],[data-remove],.cart__remove,.wsg-cart-remove");
+
+          if (!isLikelyRemoveButton && !isRemoveHref) return;
+
+          var itemKey = getClosestAttributeValue(target, ['data-key', 'data-cart-item-key', 'data-item-key']);
+          var line = getClosestAttributeValue(target, ['data-line', 'data-cart-line']);
+          if (!line && rawLine) {
+            line = rawLine;
+          }
+
+          if (!itemKey) {
+            var rowMeasurements = getMeasurementsFromRow(target);
+            if (rowMeasurements) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              fetch(makeRelativeUrlMarketAware('/cart.js'), {
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json' }
+              })
+                .then(function (response) { return response.json(); })
+                .then(function (cartJson) {
+                  var resolvedItemKey = findCartItemKeyByMeasurements(cartJson.items || [], rowMeasurements);
+                  return removeCartLine(resolvedItemKey, line);
+                })
+                .then(function () { window.location.reload(); })
+                .catch(function () { window.location.reload(); });
+              return;
+            }
+          }
+
+          if (!itemKey && !line) return;
+
+          event.preventDefault();
+          event.stopImmediatePropagation();
+
+          removeCartLine(itemKey, line)
+            .then(function () { window.location.reload(); })
+            .catch(function () { window.location.reload(); });
+        }, true);
+      }
+
+      document.addEventListener('DOMContentLoaded', async function () {
+        await appendContent('GET', makeRelativeUrlMarketAware(`/a/wsg/proxy/cart?pages=${wsgCartTotalPages}&page=${wsgCartPage}`), 'wsg-cart');
+        installWsgSafeRemoveHandler();
+        setTexts();
+      }, { once: true })
+      function setTexts() {
+        document.getElementById('wsg-cart-title').innerHTML = `{{ page.title }}`;
+        document.getElementById('wsg-cart-labe-title').innerHTML = `{{ page.title }}`;
+
+        const wsgDefaultPageContent = 'Wholesale Gorilla';
+        if (`{{ page.content }}`.indexOf(wsgDefaultPageContent) === -1) {
+          document.getElementById('wsg-cart-message').innerHTML = `{{ page.content }}`;
+        }
+      }
+    </script>
+  {% when 'ws-proxy' %}
+    <div id='wsg-proxy-content' class='wsg-proxy-container'></div>
+    <script>
+      document.addEventListener('DOMContentLoaded', async function () {
+        const wsgUrlSearchParams = new URLSearchParams(window.location.search);
+
+        let wsgProxyUrl = wsgUrlSearchParams.get('proxyUrl');
+        if(!wsgProxyUrl) return;
+
+        const wsgUrlParams = Object.fromEntries(wsgUrlSearchParams.entries());
+        const wsgQs = new URLSearchParams(wsgUrlParams).toString();
+        if(wsgQs) wsgProxyUrl += '?' + wsgQs;
+
+        // await code here
+        await appendContent('GET', wsgProxyUrl, 'wsg-proxy-content');
+      }, { once: true });
+    </script>
+{% endcase %}

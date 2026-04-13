@@ -9,6 +9,9 @@
   const ERROR_OUTPUT_SELECTOR = "[data-sqm-error]";
   const VARIANT_PRICES_SELECTOR = "[data-sqm-variant-prices]";
   const MM_PER_METER = 1000;
+  const SQM_PROPERTIES_BY_VARIANT = new Map();
+  const SQM_PROPERTY_KEYS = ["length_mm", "width_mm", "length", "width", "area"];
+  let cartRequestHooksInstalled = false;
 
   function parseNumber(value) {
     if (typeof value !== "string") return null;
@@ -60,6 +63,374 @@
     hiddenInput.value = value;
   }
 
+  function isPlainObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function getVariantIdFromForm(form) {
+    const variantInput = form.querySelector('[name="id"]');
+    if (!variantInput) return null;
+
+    const variantId = variantInput.value ? String(variantInput.value) : "";
+    return variantId || null;
+  }
+
+  function buildPropertiesFromMeasurement(measurement) {
+    return {
+      length_mm: normalizeDecimal(measurement.lengthMm, 2),
+      width_mm: normalizeDecimal(measurement.widthMm, 2),
+      length: formatArea(measurement.length),
+      width: formatArea(measurement.width),
+      area: formatArea(measurement.area),
+    };
+  }
+
+  function applyPropertiesToForm(form, properties) {
+    SQM_PROPERTY_KEYS.forEach((propertyKey) => {
+      const value = properties[propertyKey];
+      if (typeof value === "string") {
+        upsertHiddenInput(form, `properties[${propertyKey}]`, value);
+      }
+    });
+  }
+
+  function getSqmPropertiesForVariant(variantId) {
+    if (variantId === null || variantId === undefined) return null;
+    return SQM_PROPERTIES_BY_VARIANT.get(String(variantId)) || null;
+  }
+
+  function parseItemIndexKey(key) {
+    const matched = /^items\[(\d+)\]\[(id|variant_id)\]$/.exec(key);
+    return matched ? matched[1] : null;
+  }
+
+  function applyPropertiesToItemRecord(item) {
+    if (!isPlainObject(item)) {
+      return {
+        changed: false,
+        item,
+      };
+    }
+
+    const sqmProperties = getSqmPropertiesForVariant(item.id ?? item.variant_id);
+    if (!sqmProperties) {
+      return {
+        changed: false,
+        item,
+      };
+    }
+
+    const existingProperties = isPlainObject(item.properties) ? item.properties : {};
+    return {
+      changed: true,
+      item: {
+        ...item,
+        properties: {
+          ...existingProperties,
+          ...sqmProperties,
+        },
+      },
+    };
+  }
+
+  function applyPropertiesToJsonBody(payload) {
+    if (!isPlainObject(payload)) {
+      return {
+        changed: false,
+        body: payload,
+      };
+    }
+
+    if (Array.isArray(payload.items)) {
+      let changed = false;
+      const nextItems = payload.items.map((item) => {
+        const applied = applyPropertiesToItemRecord(item);
+        if (applied.changed) changed = true;
+        return applied.item;
+      });
+
+      if (!changed) {
+        return {
+          changed: false,
+          body: payload,
+        };
+      }
+
+      return {
+        changed: true,
+        body: {
+          ...payload,
+          items: nextItems,
+        },
+      };
+    }
+
+    const appliedTopLevelItem = applyPropertiesToItemRecord(payload);
+    return {
+      changed: appliedTopLevelItem.changed,
+      body: appliedTopLevelItem.item,
+    };
+  }
+
+  function applyPropertiesToSearchParams(searchParams) {
+    let changed = false;
+    const topLevelProperties = getSqmPropertiesForVariant(
+      searchParams.get("id") || searchParams.get("variant_id"),
+    );
+
+    if (topLevelProperties) {
+      SQM_PROPERTY_KEYS.forEach((propertyKey) => {
+        const value = topLevelProperties[propertyKey];
+        if (typeof value === "string") {
+          searchParams.set(`properties[${propertyKey}]`, value);
+          changed = true;
+        }
+      });
+    }
+
+    const itemVariantIdsByIndex = new Map();
+    for (const [key, value] of searchParams.entries()) {
+      const itemIndex = parseItemIndexKey(key);
+      if (itemIndex !== null) {
+        itemVariantIdsByIndex.set(itemIndex, String(value));
+      }
+    }
+
+    itemVariantIdsByIndex.forEach((variantId, itemIndex) => {
+      const sqmProperties = getSqmPropertiesForVariant(variantId);
+      if (!sqmProperties) return;
+
+      SQM_PROPERTY_KEYS.forEach((propertyKey) => {
+        const value = sqmProperties[propertyKey];
+        if (typeof value === "string") {
+          searchParams.set(`items[${itemIndex}][properties][${propertyKey}]`, value);
+          changed = true;
+        }
+      });
+    });
+
+    return changed;
+  }
+
+  function applyPropertiesToFormData(formData) {
+    let changed = false;
+    const topLevelProperties = getSqmPropertiesForVariant(
+      formData.get("id") || formData.get("variant_id"),
+    );
+
+    if (topLevelProperties) {
+      SQM_PROPERTY_KEYS.forEach((propertyKey) => {
+        const value = topLevelProperties[propertyKey];
+        if (typeof value === "string") {
+          formData.set(`properties[${propertyKey}]`, value);
+          changed = true;
+        }
+      });
+    }
+
+    const itemVariantIdsByIndex = new Map();
+    for (const [key, value] of formData.entries()) {
+      const itemIndex = parseItemIndexKey(key);
+      if (itemIndex !== null) {
+        itemVariantIdsByIndex.set(itemIndex, String(value));
+      }
+    }
+
+    itemVariantIdsByIndex.forEach((variantId, itemIndex) => {
+      const sqmProperties = getSqmPropertiesForVariant(variantId);
+      if (!sqmProperties) return;
+
+      SQM_PROPERTY_KEYS.forEach((propertyKey) => {
+        const value = sqmProperties[propertyKey];
+        if (typeof value === "string") {
+          formData.set(`items[${itemIndex}][properties][${propertyKey}]`, value);
+          changed = true;
+        }
+      });
+    });
+
+    return changed;
+  }
+
+  function parseJson(text) {
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function applySqmPropertiesToRequestBody(body, contentTypeHeader) {
+    if (!body) {
+      return {
+        changed: false,
+        body,
+      };
+    }
+
+    if (body instanceof FormData) {
+      const changed = applyPropertiesToFormData(body);
+      return { changed, body };
+    }
+
+    if (body instanceof URLSearchParams) {
+      const changed = applyPropertiesToSearchParams(body);
+      return { changed, body };
+    }
+
+    if (isPlainObject(body)) {
+      const applied = applyPropertiesToJsonBody(body);
+      return {
+        changed: applied.changed,
+        body: applied.body,
+      };
+    }
+
+    if (typeof body !== "string") {
+      return {
+        changed: false,
+        body,
+      };
+    }
+
+    const trimmedBody = body.trim();
+    const contentType = String(contentTypeHeader || "").toLowerCase();
+    const shouldTreatAsJson =
+      contentType.includes("application/json") ||
+      (trimmedBody.startsWith("{") && trimmedBody.endsWith("}"));
+
+    if (shouldTreatAsJson) {
+      const parsed = parseJson(trimmedBody);
+      if (!parsed) {
+        return {
+          changed: false,
+          body,
+        };
+      }
+
+      const applied = applyPropertiesToJsonBody(parsed);
+      return {
+        changed: applied.changed,
+        body: applied.changed ? JSON.stringify(applied.body) : body,
+      };
+    }
+
+    const searchParams = new URLSearchParams(body);
+    const changed = applyPropertiesToSearchParams(searchParams);
+    return {
+      changed,
+      body: changed ? searchParams.toString() : body,
+    };
+  }
+
+  function readHeaderValue(headers, targetHeaderName) {
+    if (!headers) return null;
+
+    const target = String(targetHeaderName || "").toLowerCase();
+    if (!target) return null;
+
+    if (headers instanceof Headers) {
+      return headers.get(targetHeaderName);
+    }
+
+    if (Array.isArray(headers)) {
+      for (const [headerName, headerValue] of headers) {
+        if (String(headerName).toLowerCase() === target) {
+          return String(headerValue);
+        }
+      }
+
+      return null;
+    }
+
+    if (isPlainObject(headers)) {
+      for (const [headerName, headerValue] of Object.entries(headers)) {
+        if (String(headerName).toLowerCase() === target) {
+          return String(headerValue);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function getRequestUrl(input) {
+    if (typeof input === "string") return input;
+    if (input instanceof URL) return input.href;
+
+    if (input && typeof input.url === "string") {
+      return input.url;
+    }
+
+    return "";
+  }
+
+  function isCartAddRequestPath(pathname) {
+    return /\/cart\/add(\.js)?$/.test(pathname);
+  }
+
+  function isCartAddRequestUrl(url) {
+    if (!url) return false;
+
+    try {
+      const parsedUrl = new URL(url, window.location.origin);
+      return isCartAddRequestPath(parsedUrl.pathname);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function installCartRequestHooks() {
+    if (cartRequestHooksInstalled) return;
+    cartRequestHooksInstalled = true;
+
+    if (typeof window.fetch === "function") {
+      const originalFetch = window.fetch;
+      window.fetch = function sqmFetch(input, init) {
+        if (!isCartAddRequestUrl(getRequestUrl(input))) {
+          return originalFetch.call(this, input, init);
+        }
+
+        if (!init || !Object.prototype.hasOwnProperty.call(init, "body")) {
+          return originalFetch.call(this, input, init);
+        }
+
+        const patchedInit = { ...init };
+        const contentTypeHeader = readHeaderValue(patchedInit.headers, "content-type");
+        const patchedBody = applySqmPropertiesToRequestBody(patchedInit.body, contentTypeHeader);
+        if (patchedBody.changed) {
+          patchedInit.body = patchedBody.body;
+        }
+
+        return originalFetch.call(this, input, patchedInit);
+      };
+    }
+
+    if (typeof window.XMLHttpRequest === "function") {
+      const originalOpen = XMLHttpRequest.prototype.open;
+      const originalSend = XMLHttpRequest.prototype.send;
+
+      XMLHttpRequest.prototype.open = function sqmOpen(method, url, ...rest) {
+        const requestMethod = typeof method === "string" ? method.toUpperCase() : "";
+        this.__sqmShouldPatchCartRequest =
+          requestMethod !== "GET" &&
+          requestMethod !== "HEAD" &&
+          isCartAddRequestUrl(String(url || ""));
+
+        return originalOpen.call(this, method, url, ...rest);
+      };
+
+      XMLHttpRequest.prototype.send = function sqmSend(body) {
+        if (!this.__sqmShouldPatchCartRequest) {
+          return originalSend.call(this, body);
+        }
+
+        const patchedBody = applySqmPropertiesToRequestBody(body, null);
+        return originalSend.call(this, patchedBody.changed ? patchedBody.body : body);
+      };
+    }
+  }
+
   function findProductForms(root) {
     const sectionContainer =
       root.closest(".shopify-section") || root.closest('section[id^="shopify-section"]');
@@ -90,10 +461,7 @@
 
   function getSelectedVariantId(forms) {
     for (const form of forms) {
-      const variantInput = form.querySelector('[name="id"]');
-      if (!variantInput) continue;
-
-      const variantId = variantInput.value ? String(variantInput.value) : "";
+      const variantId = getVariantIdFromForm(form);
       if (variantId) {
         return variantId;
       }
@@ -149,6 +517,7 @@
     const variantPrices = getVariantPrices(root);
     const boundForms = new WeakSet();
     const boundVariantInputs = new WeakSet();
+    const trackedVariantIds = new Set();
 
     function setError(message) {
       errorOutput.textContent = message;
@@ -226,12 +595,24 @@
       };
     }
 
-    function applyPropertiesToForm(form, measurement) {
-      upsertHiddenInput(form, "properties[length_mm]", normalizeDecimal(measurement.lengthMm, 2));
-      upsertHiddenInput(form, "properties[width_mm]", normalizeDecimal(measurement.widthMm, 2));
-      upsertHiddenInput(form, "properties[length]", formatArea(measurement.length));
-      upsertHiddenInput(form, "properties[width]", formatArea(measurement.width));
-      upsertHiddenInput(form, "properties[area]", formatArea(measurement.area));
+    function syncVariantProperties(forms, measurement) {
+      trackedVariantIds.forEach((variantId) => {
+        SQM_PROPERTIES_BY_VARIANT.delete(variantId);
+      });
+      trackedVariantIds.clear();
+
+      if (!measurement.valid) return null;
+
+      const properties = buildPropertiesFromMeasurement(measurement);
+      forms.forEach((form) => {
+        const variantId = getVariantIdFromForm(form);
+        if (!variantId) return;
+
+        trackedVariantIds.add(variantId);
+        SQM_PROPERTIES_BY_VARIANT.set(variantId, properties);
+      });
+
+      return properties;
     }
 
     function bindFormValidation(form) {
@@ -250,7 +631,8 @@
         }
 
         setError("");
-        applyPropertiesToForm(form, measurement);
+        const properties = buildPropertiesFromMeasurement(measurement);
+        applyPropertiesToForm(form, properties);
       });
     }
 
@@ -277,11 +659,13 @@
         updateSummary(measurement.area, measurement.totalPrice);
       }
 
+      const properties = syncVariantProperties(forms, measurement);
+
       forms.forEach((form) => {
         bindFormValidation(form);
         bindVariantChangeRefresh(form, refresh);
-        if (measurement.valid) {
-          applyPropertiesToForm(form, measurement);
+        if (properties) {
+          applyPropertiesToForm(form, properties);
         }
       });
     }
@@ -292,6 +676,7 @@
   }
 
   function initializeBlocks() {
+    installCartRequestHooks();
     document.querySelectorAll(BLOCK_SELECTOR).forEach((element) => {
       initializeBlock(element);
     });
