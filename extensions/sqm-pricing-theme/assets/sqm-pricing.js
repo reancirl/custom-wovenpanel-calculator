@@ -121,14 +121,29 @@
     }
 
     const existingProperties = isPlainObject(item.properties) ? item.properties : {};
+    const nextProperties = { ...existingProperties };
+    let changed = false;
+
+    SQM_PROPERTY_KEYS.forEach((propertyKey) => {
+      if (typeof nextProperties[propertyKey] === "string") return;
+      const sqmValue = sqmProperties[propertyKey];
+      if (typeof sqmValue !== "string") return;
+      nextProperties[propertyKey] = sqmValue;
+      changed = true;
+    });
+
+    if (!changed) {
+      return {
+        changed: false,
+        item,
+      };
+    }
+
     return {
       changed: true,
       item: {
         ...item,
-        properties: {
-          ...existingProperties,
-          ...sqmProperties,
-        },
+        properties: nextProperties,
       },
     };
   }
@@ -181,8 +196,9 @@
     if (topLevelProperties) {
       SQM_PROPERTY_KEYS.forEach((propertyKey) => {
         const value = topLevelProperties[propertyKey];
-        if (typeof value === "string") {
-          searchParams.set(`properties[${propertyKey}]`, value);
+        const targetKey = `properties[${propertyKey}]`;
+        if (typeof value === "string" && !searchParams.has(targetKey)) {
+          searchParams.set(targetKey, value);
           changed = true;
         }
       });
@@ -202,8 +218,9 @@
 
       SQM_PROPERTY_KEYS.forEach((propertyKey) => {
         const value = sqmProperties[propertyKey];
-        if (typeof value === "string") {
-          searchParams.set(`items[${itemIndex}][properties][${propertyKey}]`, value);
+        const targetKey = `items[${itemIndex}][properties][${propertyKey}]`;
+        if (typeof value === "string" && !searchParams.has(targetKey)) {
+          searchParams.set(targetKey, value);
           changed = true;
         }
       });
@@ -221,8 +238,9 @@
     if (topLevelProperties) {
       SQM_PROPERTY_KEYS.forEach((propertyKey) => {
         const value = topLevelProperties[propertyKey];
-        if (typeof value === "string") {
-          formData.set(`properties[${propertyKey}]`, value);
+        const targetKey = `properties[${propertyKey}]`;
+        if (typeof value === "string" && !formData.has(targetKey)) {
+          formData.set(targetKey, value);
           changed = true;
         }
       });
@@ -242,8 +260,9 @@
 
       SQM_PROPERTY_KEYS.forEach((propertyKey) => {
         const value = sqmProperties[propertyKey];
-        if (typeof value === "string") {
-          formData.set(`items[${itemIndex}][properties][${propertyKey}]`, value);
+        const targetKey = `items[${itemIndex}][properties][${propertyKey}]`;
+        if (typeof value === "string" && !formData.has(targetKey)) {
+          formData.set(targetKey, value);
           changed = true;
         }
       });

@@ -212,6 +212,8 @@
       let wsgCartPage = wsgUrlParams.page || 1;
       const wsgCartPaginationLimit = 20;
       let wsgCartTotalPages = Math.ceil(wsgCart.items.length / wsgCartPaginationLimit);
+      var wsgLineToItemKeyMap = {};
+      var wsgCartChangeRequestPatched = false;
 
       function toMarketAwareUrl(rawUrl) {
         if (!rawUrl) return "";
@@ -243,24 +245,99 @@
         return parsed;
       }
 
-      function parseMeasurementFromText(text, key) {
-        if (!text) return null;
-        var matcher = new RegExp(key + "\\s*:?\\s*([0-9]+(?:\\.[0-9]+)?)", 'i');
-        var match = text.match(matcher);
-        if (!match) return null;
-        return parseNumberLoose(match[1]);
+      function parseMeasurementsFromText(text, key) {
+        if (!text) return [];
+        var matcher = new RegExp(key + "\\s*:?\\s*([0-9]+(?:\\.[0-9]+)?)", 'ig');
+        var values = [];
+        var match;
+        while ((match = matcher.exec(text)) !== null) {
+          var parsed = parseNumberLoose(match[1]);
+          if (parsed !== null) values.push(parsed);
+        }
+        return values;
       }
 
-      function getMeasurementsFromRow(target) {
-        var row = target.closest('tr,li,.cart-item,.wsg-cart-item,.wsg-item-row,[data-cart-item]');
+      function pickMeasurementValue(values, preferredIndex) {
+        if (!values.length) return null;
+        if (preferredIndex === null || preferredIndex === undefined) return values[0];
+        var zeroBasedIndex = Math.max(0, Number(preferredIndex) - 1);
+        if (zeroBasedIndex < values.length) return values[zeroBasedIndex];
+        return values[0];
+      }
+
+      function findMeasurementContainer(target) {
+        var current = target;
+        while (current && current !== document) {
+          var text = String(current.innerText || '').replace(/\s+/g, ' ');
+          if (/length_mm\s*:/i.test(text) && /width_mm\s*:/i.test(text)) {
+            return current;
+          }
+          current = current.parentElement;
+        }
+        return null;
+      }
+
+      function getRemoveControlCount(node) {
+        if (!node || !node.querySelectorAll) return 0;
+        return node.querySelectorAll("a[href*='/cart/change'][href*='quantity=0'],[name='remove'],.wsg-cart-remove,.cart__remove").length;
+      }
+
+      function findRowContainerFromRemoveControl(control) {
+        var current = control;
+        var rowCandidate = null;
+
+        while (current && current !== document) {
+          var removeCount = getRemoveControlCount(current);
+          if (removeCount === 1) {
+            rowCandidate = current;
+          } else if (removeCount > 1) {
+            break;
+          }
+          current = current.parentElement;
+        }
+
+        return rowCandidate || control.closest('tr,li,.cart-item,.wsg-cart-item,.wsg-item-row,[data-cart-item]');
+      }
+
+      function getMeasurementsFromRow(target, preferredIndex) {
+        var row = findMeasurementContainer(target);
         if (!row) return null;
 
         var text = String(row.innerText || '').replace(/\s+/g, ' ');
-        var lengthMm = parseMeasurementFromText(text, 'length_mm');
-        var widthMm = parseMeasurementFromText(text, 'width_mm');
-        var length = parseMeasurementFromText(text, 'length');
-        var width = parseMeasurementFromText(text, 'width');
-        var area = parseMeasurementFromText(text, 'area');
+        var lengthMm = pickMeasurementValue(parseMeasurementsFromText(text, 'length_mm'), preferredIndex);
+        var widthMm = pickMeasurementValue(parseMeasurementsFromText(text, 'width_mm'), preferredIndex);
+        var length = pickMeasurementValue(parseMeasurementsFromText(text, 'length'), preferredIndex);
+        var width = pickMeasurementValue(parseMeasurementsFromText(text, 'width'), preferredIndex);
+        var area = pickMeasurementValue(parseMeasurementsFromText(text, 'area'), preferredIndex);
+
+        if (
+          lengthMm === null &&
+          widthMm === null &&
+          length === null &&
+          width === null &&
+          area === null
+        ) {
+          return null;
+        }
+
+        return {
+          lengthMm: lengthMm,
+          widthMm: widthMm,
+          length: length,
+          width: width,
+          area: area,
+        };
+      }
+
+      function getMeasurementsFromNode(node) {
+        if (!node) return null;
+
+        var text = String(node.innerText || '').replace(/\s+/g, ' ');
+        var lengthMm = pickMeasurementValue(parseMeasurementsFromText(text, 'length_mm'));
+        var widthMm = pickMeasurementValue(parseMeasurementsFromText(text, 'width_mm'));
+        var length = pickMeasurementValue(parseMeasurementsFromText(text, 'length'));
+        var width = pickMeasurementValue(parseMeasurementsFromText(text, 'width'));
+        var area = pickMeasurementValue(parseMeasurementsFromText(text, 'area'));
 
         if (
           lengthMm === null &&
@@ -318,6 +395,309 @@
         }
 
         return '';
+      }
+
+      function getCartRemoveAnchors(container) {
+        if (!container) return [];
+        return Array.from(
+          container.querySelectorAll("a[href*='/cart/change'][href*='quantity=0']")
+        );
+      }
+
+      function rewriteRemoveControlsToItemKeys(cartJson) {
+        var container = document.getElementById('wsg-cart');
+        if (!container || !cartJson || !Array.isArray(cartJson.items)) return;
+
+        wsgLineToItemKeyMap = {};
+        var removeAnchors = getCartRemoveAnchors(container);
+        removeAnchors.forEach(function (anchor, anchorIndex) {
+          var rowContainer = findRowContainerFromRemoveControl(anchor);
+          var measurements = getMeasurementsFromNode(rowContainer);
+          var itemKey = measurements ? findCartItemKeyByMeasurements(cartJson.items, measurements) : '';
+
+          if (!itemKey) {
+            try {
+              var hrefUrl = new URL(anchor.getAttribute('href') || '', window.location.origin);
+              var hrefLine = Number.parseInt(hrefUrl.searchParams.get('line') || '', 10);
+              if (Number.isFinite(hrefLine) && hrefLine > 0 && cartJson.items[hrefLine - 1]) {
+                itemKey = cartJson.items[hrefLine - 1].key || '';
+              }
+            } catch (error) {
+              itemKey = '';
+            }
+          }
+
+          if (!itemKey && cartJson.items[anchorIndex]) {
+            itemKey = cartJson.items[anchorIndex].key || '';
+          }
+
+          if (!itemKey) return;
+
+          wsgLineToItemKeyMap[String(anchorIndex + 1)] = itemKey;
+
+          var encodedKey = encodeURIComponent(itemKey);
+          anchor.setAttribute('href', makeRelativeUrlMarketAware('/cart/change?id=' + encodedKey + '&quantity=0'));
+          anchor.setAttribute('data-cart-item-key', itemKey);
+
+          var removeWrapper = anchor.closest('a,button,[role="button"],.cart__remove,.wsg-cart-remove');
+          if (removeWrapper) {
+            removeWrapper.setAttribute('data-cart-item-key', itemKey);
+          }
+        });
+      }
+
+      function toIntegerCents(value) {
+        var parsed = Number.parseFloat(value);
+        if (!Number.isFinite(parsed)) return null;
+        return Math.round(parsed);
+      }
+
+      function formatCartMoney(cents, currencyCode) {
+        var normalizedCents = toIntegerCents(cents);
+        if (normalizedCents === null) return '';
+
+        if (window.Shopify && typeof window.Shopify.formatMoney === 'function') {
+          try {
+            var moneyFormat = (window.theme && window.theme.moneyFormat) || window.Shopify.money_format || '${{amount}}';
+            return window.Shopify.formatMoney(normalizedCents, moneyFormat);
+          } catch (error) {
+            // Fall through to Intl fallback.
+          }
+        }
+
+        var amount = normalizedCents / 100;
+        try {
+          return new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency: currencyCode || wsgCurrency || 'USD'
+          }).format(amount);
+        } catch (error) {
+          return (currencyCode || wsgCurrency || 'USD') + ' ' + amount.toFixed(2);
+        }
+      }
+
+      function isLikelyPriceText(text) {
+        var normalized = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!normalized) return false;
+        if (!/[\$€£¥₹₱₩₫₽₪₴₦฿]|\b[A-Z]{3}\b/.test(normalized)) return false;
+
+        return /^[-+]?[^0-9-+]*\d{1,3}(?:[, ]\d{3})*(?:\.\d{2})?(?:\s*[A-Z]{3})?$/.test(normalized) ||
+          /^[-+]?[^0-9-+]*\d+(?:\.\d{2})?(?:\s*[A-Z]{3})?$/.test(normalized);
+      }
+
+      function getPriceTextNodesFromRow(rowContainer) {
+        if (!rowContainer || !rowContainer.querySelectorAll) return [];
+
+        var preferredSelectors = "[data-cart-item-price],[data-price],.price,.money,.cart-item__price,.wsg-cart-item-price,.wsg-item-price,.amount";
+        var preferredNodes = Array.from(rowContainer.querySelectorAll(preferredSelectors));
+        var genericNodes = Array.from(rowContainer.querySelectorAll('span,p,strong,div,td,th'));
+        var nodes = preferredNodes.length ? preferredNodes : genericNodes;
+        var seen = new Set();
+
+        return nodes.filter(function (node) {
+          if (!node || seen.has(node)) return false;
+          seen.add(node);
+          if (node.closest && node.closest('s,del,.compare-at,[data-compare-at-price]')) return false;
+          if (node.children && node.children.length > 0) return false;
+
+          var text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+          return isLikelyPriceText(text);
+        });
+      }
+
+      function findCartItemByKey(items, itemKey) {
+        if (!Array.isArray(items) || !itemKey) return null;
+        for (var i = 0; i < items.length; i += 1) {
+          if (items[i] && items[i].key === itemKey) return items[i];
+        }
+        return null;
+      }
+
+      function resolveCartItemFromAnchor(anchor, cartJson, anchorIndex) {
+        if (!anchor || !cartJson || !Array.isArray(cartJson.items)) return null;
+
+        var keyFromAttrs = getClosestAttributeValue(anchor, ['data-cart-item-key', 'data-key', 'data-item-key']);
+        if (keyFromAttrs) {
+          var keyedItem = findCartItemByKey(cartJson.items, keyFromAttrs);
+          if (keyedItem) return keyedItem;
+        }
+
+        try {
+          var hrefUrl = new URL(anchor.getAttribute('href') || '', window.location.origin);
+          var hrefLine = Number.parseInt(hrefUrl.searchParams.get('line') || '', 10);
+          if (Number.isFinite(hrefLine) && hrefLine > 0 && cartJson.items[hrefLine - 1]) {
+            return cartJson.items[hrefLine - 1];
+          }
+        } catch (error) {
+          // no-op
+        }
+
+        var rowContainer = findRowContainerFromRemoveControl(anchor);
+        var measurements = getMeasurementsFromNode(rowContainer);
+        if (measurements) {
+          var matchedKey = findCartItemKeyByMeasurements(cartJson.items, measurements);
+          if (matchedKey) {
+            var measuredItem = findCartItemByKey(cartJson.items, matchedKey);
+            if (measuredItem) return measuredItem;
+          }
+        }
+
+        if (cartJson.items[anchorIndex]) return cartJson.items[anchorIndex];
+        return null;
+      }
+
+      function syncRenderedLinePrices(cartJson) {
+        var container = document.getElementById('wsg-cart');
+        if (!container || !cartJson || !Array.isArray(cartJson.items) || !cartJson.items.length) return;
+
+        var removeAnchors = getCartRemoveAnchors(container);
+        removeAnchors.forEach(function (anchor, anchorIndex) {
+          var rowContainer = findRowContainerFromRemoveControl(anchor);
+          if (!rowContainer) return;
+
+          var cartItem = resolveCartItemFromAnchor(anchor, cartJson, anchorIndex);
+          if (!cartItem) return;
+
+          var formattedLinePrice = formatCartMoney(cartItem.final_line_price, cartJson.currency || wsgCurrency);
+          if (!formattedLinePrice) return;
+
+          var priceNodes = getPriceTextNodesFromRow(rowContainer);
+          if (!priceNodes.length) return;
+
+          priceNodes.forEach(function (priceNode) {
+            priceNode.textContent = formattedLinePrice;
+          });
+        });
+      }
+
+      function resolveItemKeyFromLine(lineValue) {
+        var normalized = String(lineValue || '').trim();
+        if (!normalized) return '';
+        return wsgLineToItemKeyMap[normalized] || '';
+      }
+
+      function rewriteCartChangeParams(searchParams) {
+        if (!searchParams || searchParams.has('id')) return false;
+        if (!searchParams.has('line')) return false;
+
+        var key = resolveItemKeyFromLine(searchParams.get('line'));
+        if (!key) return false;
+
+        searchParams.set('id', key);
+        searchParams.delete('line');
+        return true;
+      }
+
+      function rewriteCartChangeBody(body) {
+        if (!body) return { changed: false, body: body };
+
+        if (typeof body === 'string') {
+          var trimmedBody = body.trim();
+          if (!trimmedBody) return { changed: false, body: body };
+
+          if (trimmedBody.charAt(0) === '{' && trimmedBody.charAt(trimmedBody.length - 1) === '}') {
+            try {
+              var parsedBody = JSON.parse(trimmedBody);
+              if (!parsedBody || typeof parsedBody !== 'object' || parsedBody.id || !parsedBody.line) {
+                return { changed: false, body: body };
+              }
+              var jsonKey = resolveItemKeyFromLine(parsedBody.line);
+              if (!jsonKey) return { changed: false, body: body };
+              parsedBody.id = jsonKey;
+              delete parsedBody.line;
+              return { changed: true, body: JSON.stringify(parsedBody) };
+            } catch (error) {
+              return { changed: false, body: body };
+            }
+          }
+
+          var paramsFromString = new URLSearchParams(body);
+          if (!rewriteCartChangeParams(paramsFromString)) {
+            return { changed: false, body: body };
+          }
+          return { changed: true, body: paramsFromString.toString() };
+        }
+
+        if (body instanceof URLSearchParams) {
+          var changedParams = rewriteCartChangeParams(body);
+          return { changed: changedParams, body: body };
+        }
+
+        if (body instanceof FormData) {
+          var idExists = body.has('id');
+          var lineValue = body.get('line');
+          if (idExists || !lineValue) return { changed: false, body: body };
+          var formKey = resolveItemKeyFromLine(lineValue);
+          if (!formKey) return { changed: false, body: body };
+          body.set('id', formKey);
+          body.delete('line');
+          return { changed: true, body: body };
+        }
+
+        if (typeof body === 'object') {
+          if (body.id || !body.line) return { changed: false, body: body };
+          var objectKey = resolveItemKeyFromLine(body.line);
+          if (!objectKey) return { changed: false, body: body };
+          body.id = objectKey;
+          delete body.line;
+          return { changed: true, body: body };
+        }
+
+        return { changed: false, body: body };
+      }
+
+      function isCartChangeUrl(url) {
+        if (!url) return false;
+        try {
+          var parsedUrl = new URL(url, window.location.origin);
+          return /\/cart\/change(\.js)?$/.test(parsedUrl.pathname);
+        } catch (error) {
+          return false;
+        }
+      }
+
+      function installWsgCartChangeRequestPatch() {
+        if (wsgCartChangeRequestPatched) return;
+        wsgCartChangeRequestPatched = true;
+
+        if (typeof window.fetch === 'function') {
+          var originalFetch = window.fetch;
+          window.fetch = function wsgFetchPatch(input, init) {
+            var requestUrl = typeof input === 'string' ? input : (input && input.url) || '';
+            if (!isCartChangeUrl(requestUrl) || !init || !Object.prototype.hasOwnProperty.call(init, 'body')) {
+              return originalFetch.call(this, input, init);
+            }
+
+            var nextInit = Object.assign({}, init);
+            var rewritten = rewriteCartChangeBody(nextInit.body);
+            if (rewritten.changed) {
+              nextInit.body = rewritten.body;
+            }
+            return originalFetch.call(this, input, nextInit);
+          };
+        }
+
+        if (typeof window.XMLHttpRequest === 'function') {
+          var originalOpen = XMLHttpRequest.prototype.open;
+          var originalSend = XMLHttpRequest.prototype.send;
+
+          XMLHttpRequest.prototype.open = function wsgXhrOpen(method, url) {
+            this.__wsgIsCartChangeRequest =
+              typeof method === 'string' &&
+              method.toUpperCase() === 'POST' &&
+              isCartChangeUrl(String(url || ''));
+            return originalOpen.apply(this, arguments);
+          };
+
+          XMLHttpRequest.prototype.send = function wsgXhrSend(body) {
+            if (!this.__wsgIsCartChangeRequest) {
+              return originalSend.call(this, body);
+            }
+
+            var rewritten = rewriteCartChangeBody(body);
+            return originalSend.call(this, rewritten.changed ? rewritten.body : body);
+          };
+        }
       }
 
       async function removeCartLine(itemKey, line) {
@@ -385,7 +765,7 @@
           }
 
           if (!itemKey) {
-            var rowMeasurements = getMeasurementsFromRow(target);
+            var rowMeasurements = getMeasurementsFromRow(target, line || rawLine);
             if (rowMeasurements) {
               event.preventDefault();
               event.stopImmediatePropagation();
@@ -396,7 +776,10 @@
                 .then(function (response) { return response.json(); })
                 .then(function (cartJson) {
                   var resolvedItemKey = findCartItemKeyByMeasurements(cartJson.items || [], rowMeasurements);
-                  return removeCartLine(resolvedItemKey, line);
+                  if (!resolvedItemKey) {
+                    return;
+                  }
+                  return removeCartLine(resolvedItemKey, '');
                 })
                 .then(function () { window.location.reload(); })
                 .catch(function () { window.location.reload(); });
@@ -416,7 +799,23 @@
       }
 
       document.addEventListener('DOMContentLoaded', async function () {
+        installWsgCartChangeRequestPatch();
         await appendContent('GET', makeRelativeUrlMarketAware(`/a/wsg/proxy/cart?pages=${wsgCartTotalPages}&page=${wsgCartPage}`), 'wsg-cart');
+        rewriteRemoveControlsToItemKeys(wsgCart);
+        syncRenderedLinePrices(wsgCart);
+        try {
+          var cartResponse = await fetch(makeRelativeUrlMarketAware('/cart.js'), {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
+          });
+          var cartJson = await cartResponse.json();
+          wsgCart = cartJson;
+          rewriteRemoveControlsToItemKeys(cartJson);
+          syncRenderedLinePrices(cartJson);
+        } catch (error) {
+          console.warn('Unable to rewrite WSG remove controls to cart item keys.', error);
+          syncRenderedLinePrices(wsgCart);
+        }
         installWsgSafeRemoveHandler();
         setTexts();
       }, { once: true })
