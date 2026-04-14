@@ -11,6 +11,7 @@
   const MM_PER_METER = 1000;
   const SQM_PROPERTIES_BY_VARIANT = new Map();
   const SQM_PROPERTY_KEYS = ["length_mm", "width_mm", "length", "width", "area"];
+  const SQM_UID_PROPERTY_KEY = "_sqm_uid";
   let cartRequestHooksInstalled = false;
 
   function parseNumber(value) {
@@ -75,6 +76,10 @@
     return variantId || null;
   }
 
+  function generateSqmUid() {
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
   function buildPropertiesFromMeasurement(measurement) {
     return {
       length_mm: normalizeDecimal(measurement.lengthMm, 2),
@@ -86,11 +91,11 @@
   }
 
   function applyPropertiesToForm(form, properties) {
-    SQM_PROPERTY_KEYS.forEach((propertyKey) => {
-      const value = properties[propertyKey];
-      if (typeof value === "string") {
-        upsertHiddenInput(form, `properties[${propertyKey}]`, value);
-      }
+    if (!isPlainObject(properties)) return;
+
+    Object.entries(properties).forEach(([propertyKey, value]) => {
+      if (typeof value !== "string") return;
+      upsertHiddenInput(form, `properties[${propertyKey}]`, value);
     });
   }
 
@@ -131,6 +136,11 @@
       nextProperties[propertyKey] = sqmValue;
       changed = true;
     });
+
+    if (typeof nextProperties[SQM_UID_PROPERTY_KEY] !== "string" || !nextProperties[SQM_UID_PROPERTY_KEY].trim()) {
+      nextProperties[SQM_UID_PROPERTY_KEY] = generateSqmUid();
+      changed = true;
+    }
 
     if (!changed) {
       return {
@@ -202,6 +212,12 @@
           changed = true;
         }
       });
+
+      const uidKey = `properties[${SQM_UID_PROPERTY_KEY}]`;
+      if (!searchParams.has(uidKey)) {
+        searchParams.set(uidKey, generateSqmUid());
+        changed = true;
+      }
     }
 
     const itemVariantIdsByIndex = new Map();
@@ -224,6 +240,12 @@
           changed = true;
         }
       });
+
+      const uidKey = `items[${itemIndex}][properties][${SQM_UID_PROPERTY_KEY}]`;
+      if (!searchParams.has(uidKey)) {
+        searchParams.set(uidKey, generateSqmUid());
+        changed = true;
+      }
     });
 
     return changed;
@@ -244,6 +266,12 @@
           changed = true;
         }
       });
+
+      const uidKey = `properties[${SQM_UID_PROPERTY_KEY}]`;
+      if (!formData.has(uidKey)) {
+        formData.set(uidKey, generateSqmUid());
+        changed = true;
+      }
     }
 
     const itemVariantIdsByIndex = new Map();
@@ -266,6 +294,12 @@
           changed = true;
         }
       });
+
+      const uidKey = `items[${itemIndex}][properties][${SQM_UID_PROPERTY_KEY}]`;
+      if (!formData.has(uidKey)) {
+        formData.set(uidKey, generateSqmUid());
+        changed = true;
+      }
     });
 
     return changed;
@@ -651,6 +685,7 @@
 
         setError("");
         const properties = buildPropertiesFromMeasurement(measurement);
+        properties[SQM_UID_PROPERTY_KEY] = generateSqmUid();
         applyPropertiesToForm(form, properties);
       });
     }

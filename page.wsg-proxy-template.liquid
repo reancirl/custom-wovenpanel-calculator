@@ -546,16 +546,119 @@
         return null;
       }
 
+      function parsePositiveInt(value) {
+        var parsed = Number.parseInt(String(value || '').trim(), 10);
+        if (!Number.isFinite(parsed) || parsed <= 0) return null;
+        return parsed;
+      }
+
+      function getLineIndexFromHref(href) {
+        if (!href) return null;
+        try {
+          var parsedUrl = new URL(href, window.location.origin);
+          return parsePositiveInt(parsedUrl.searchParams.get('line'));
+        } catch (error) {
+          return null;
+        }
+      }
+
+      function getLineIndexFromRow(rowContainer) {
+        if (!rowContainer) return null;
+
+        var lineAttrElement = rowContainer.querySelector('[data-line],[data-cart-line],[data-index]');
+        if (lineAttrElement) {
+          var lineFromAttr = parsePositiveInt(
+            lineAttrElement.getAttribute('data-line') ||
+            lineAttrElement.getAttribute('data-cart-line') ||
+            lineAttrElement.getAttribute('data-index')
+          );
+          if (lineFromAttr !== null) return lineFromAttr;
+        }
+
+        var removeAnchor = rowContainer.querySelector("a[href*='/cart/change']");
+        if (removeAnchor) {
+          var lineFromHref = getLineIndexFromHref(removeAnchor.getAttribute('href'));
+          if (lineFromHref !== null) return lineFromHref;
+        }
+
+        var quantityInput = rowContainer.querySelector("input[id*='Quantity-'],input[id*='quantity-']");
+        if (quantityInput && quantityInput.id) {
+          var idMatch = quantityInput.id.match(/(\d+)$/);
+          if (idMatch && idMatch[1]) {
+            var lineFromId = parsePositiveInt(idMatch[1]);
+            if (lineFromId !== null) return lineFromId;
+          }
+        }
+
+        return null;
+      }
+
+      function getRenderedCartRows(container) {
+        if (!container) return [];
+        var rowSet = new Set();
+        var rowSelector = 'tr,li,.cart-item,.wsg-cart-item,.wsg-item-row,[data-cart-item]';
+
+        Array.from(
+          container.querySelectorAll(
+            "input.quantity__input,input[name='updates[]'],[name='remove'],.wsg-cart-remove,.cart__remove,a[href*='/cart/change'][href*='quantity=0']"
+          )
+        ).forEach(function (node) {
+          var row = node.closest ? node.closest(rowSelector) : null;
+          if (row) rowSet.add(row);
+        });
+
+        if (!rowSet.size) {
+          Array.from(container.querySelectorAll(rowSelector)).forEach(function (row) {
+            var text = String(row.innerText || '').replace(/\s+/g, ' ');
+            if (/length_mm\s*:/i.test(text) && /width_mm\s*:/i.test(text)) {
+              rowSet.add(row);
+            }
+          });
+        }
+
+        return Array.from(rowSet);
+      }
+
+      function resolveCartItemFromRow(rowContainer, cartJson, rowIndex) {
+        if (!rowContainer || !cartJson || !Array.isArray(cartJson.items)) return null;
+
+        var rowItemKey = getClosestAttributeValue(rowContainer, ['data-cart-item-key', 'data-key', 'data-item-key']);
+        if (rowItemKey) {
+          var keyedItem = findCartItemByKey(cartJson.items, rowItemKey);
+          if (keyedItem) return keyedItem;
+        }
+
+        var lineIndex = getLineIndexFromRow(rowContainer);
+        if (lineIndex !== null && cartJson.items[lineIndex - 1]) {
+          return cartJson.items[lineIndex - 1];
+        }
+
+        var measurements = getMeasurementsFromNode(rowContainer);
+        if (measurements) {
+          var matchedKey = findCartItemKeyByMeasurements(cartJson.items, measurements);
+          if (matchedKey) {
+            var measuredItem = findCartItemByKey(cartJson.items, matchedKey);
+            if (measuredItem) return measuredItem;
+          }
+        }
+
+        var removeAnchor = rowContainer.querySelector("a[href*='/cart/change']");
+        if (removeAnchor) {
+          var anchoredItem = resolveCartItemFromAnchor(removeAnchor, cartJson, rowIndex);
+          if (anchoredItem) return anchoredItem;
+        }
+
+        if (cartJson.items[rowIndex]) return cartJson.items[rowIndex];
+        return null;
+      }
+
       function syncRenderedLinePrices(cartJson) {
         var container = document.getElementById('wsg-cart');
         if (!container || !cartJson || !Array.isArray(cartJson.items) || !cartJson.items.length) return;
 
-        var removeAnchors = getCartRemoveAnchors(container);
-        removeAnchors.forEach(function (anchor, anchorIndex) {
-          var rowContainer = findRowContainerFromRemoveControl(anchor);
-          if (!rowContainer) return;
-
-          var cartItem = resolveCartItemFromAnchor(anchor, cartJson, anchorIndex);
+        var rows = getRenderedCartRows(container);
+        rows.forEach(function (rowContainer, rowIndex) {
+          var cartItem = resolveCartItemFromRow(rowContainer, cartJson, rowIndex);
           if (!cartItem) return;
 
           var formattedLinePrice = formatCartMoney(cartItem.final_line_price, cartJson.currency || wsgCurrency);
