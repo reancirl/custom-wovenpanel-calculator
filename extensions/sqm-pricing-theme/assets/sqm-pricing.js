@@ -758,6 +758,35 @@
     return /area\s*\([^)]*\)/i.test(String(value ?? ""));
   }
 
+  function parseAreaSqmFromValue(value) {
+    const text = String(value ?? "");
+    if (!text) return null;
+
+    const matched = text.match(/area\s*\([^)]*\)\s*([\d.,]+)\s*sq\s*m/i);
+    if (!matched) return null;
+
+    const normalized = matched[1].replace(/,/g, "");
+    const parsed = Number.parseFloat(normalized);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+
+    return parsed;
+  }
+
+  function extractVariantAreaSqm(variant) {
+    if (!variant) return null;
+
+    const titleArea = parseAreaSqmFromValue(variant.title);
+    if (titleArea !== null) return titleArea;
+
+    if (!Array.isArray(variant.options)) return null;
+    for (const optionValue of variant.options) {
+      const optionArea = parseAreaSqmFromValue(optionValue);
+      if (optionArea !== null) return optionArea;
+    }
+
+    return null;
+  }
+
   function buildVariantIdentityTokens(variant) {
     if (!variant) return [];
 
@@ -777,10 +806,12 @@
     return Array.from(tokens);
   }
 
-  function resolvePricingVariantId(selectedVariantId, totalPrice, variants, variantsById) {
+  function resolvePricingVariantId(selectedVariantId, totalPrice, areaSqm, variants, variantsById) {
     const normalizedSelectedVariantId = String(selectedVariantId ?? "").trim();
     if (!normalizedSelectedVariantId) return null;
-    if (!Number.isFinite(totalPrice) || totalPrice <= 0) return normalizedSelectedVariantId;
+    const hasValidTotalPrice = Number.isFinite(totalPrice) && totalPrice > 0;
+    const hasValidArea = Number.isFinite(areaSqm) && areaSqm > 0;
+    if (!hasValidTotalPrice && !hasValidArea) return normalizedSelectedVariantId;
     if (!Array.isArray(variants) || variants.length === 0) return normalizedSelectedVariantId;
 
     const sourceVariant = variantsById.get(normalizedSelectedVariantId);
@@ -815,6 +846,40 @@
     }
 
     if (candidates.length === 0) return sourceVariant.id;
+
+    if (hasValidArea) {
+      const areaCandidates = candidates
+        .map((variant) => ({
+          variant,
+          area: extractVariantAreaSqm(variant),
+        }))
+        .filter((entry) => entry.area !== null);
+
+      if (areaCandidates.length > 0) {
+        let closestAreaCandidate = areaCandidates[0];
+        let closestAreaDiff = Math.abs(closestAreaCandidate.area - areaSqm);
+
+        areaCandidates.forEach((entry) => {
+          const diff = Math.abs(entry.area - areaSqm);
+          if (diff < closestAreaDiff) {
+            closestAreaCandidate = entry;
+            closestAreaDiff = diff;
+          }
+        });
+
+        const sourceArea = extractVariantAreaSqm(sourceVariant);
+        if (sourceArea !== null) {
+          const sourceAreaDiff = Math.abs(sourceArea - areaSqm);
+          if (sourceAreaDiff <= closestAreaDiff + 0.000001) {
+            return sourceVariant.id;
+          }
+        }
+
+        return closestAreaCandidate.variant.id;
+      }
+    }
+
+    if (!hasValidTotalPrice) return sourceVariant.id;
 
     let closestVariant = candidates[0];
     let closestDiff = Math.abs(closestVariant.price - totalPrice);
@@ -997,6 +1062,7 @@
         const pricingVariantId = resolvePricingVariantId(
           selectedVariantId,
           measurement.totalPrice,
+          measurement.area,
           variantRecords,
           variantsById,
         );
@@ -1034,6 +1100,7 @@
         const pricingVariantId = resolvePricingVariantId(
           selectedVariantId,
           measurement.totalPrice,
+          measurement.area,
           variantRecords,
           variantsById,
         );
