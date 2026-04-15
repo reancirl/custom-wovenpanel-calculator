@@ -90,6 +90,20 @@
         {% endfor %}
       }
     </script>
+
+    <script type="application/json" data-sqm-variants>
+      [
+        {% for variant in target_product.variants %}
+          {
+            "id": "{{ variant.id }}",
+            "price": {{ variant.price | divided_by: 100.0 }},
+            "title": {{ variant.title | json }},
+            "sku": {{ variant.sku | json }},
+            "options": {{ variant.options | json }}
+          }{% unless forloop.last %},{% endunless %}
+        {% endfor %}
+      ]
+    </script>
   </div>
 {% elsif request.design_mode %}
   <div class="sqm-pricing-block">

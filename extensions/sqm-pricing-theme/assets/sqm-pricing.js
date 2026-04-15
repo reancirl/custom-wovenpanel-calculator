@@ -8,10 +8,13 @@
   const TOTAL_OUTPUT_SELECTOR = "[data-sqm-total]";
   const ERROR_OUTPUT_SELECTOR = "[data-sqm-error]";
   const VARIANT_PRICES_SELECTOR = "[data-sqm-variant-prices]";
+  const VARIANTS_SELECTOR = "[data-sqm-variants]";
   const MM_PER_METER = 1000;
   const SQM_PROPERTIES_BY_VARIANT = new Map();
+  const SQM_TARGET_VARIANT_BY_SOURCE = new Map();
   const SQM_PROPERTY_KEYS = ["length_mm", "width_mm", "length", "width", "area"];
   const SQM_UID_PROPERTY_KEY = "_sqm_uid";
+  const SELECTED_VARIANT_PROPERTY_KEY = "_selected_variant_id";
   let cartRequestHooksInstalled = false;
 
   function parseNumber(value) {
@@ -106,7 +109,25 @@
 
   function parseItemIndexKey(key) {
     const matched = /^items\[(\d+)\]\[(id|variant_id)\]$/.exec(key);
-    return matched ? matched[1] : null;
+    if (!matched) return null;
+    return {
+      itemIndex: matched[1],
+      keyType: matched[2],
+    };
+  }
+
+  function resolveMappedVariantId(variantId) {
+    if (variantId === null || variantId === undefined) return null;
+
+    const normalizedVariantId = String(variantId).trim();
+    if (!normalizedVariantId) return null;
+
+    const mappedVariantId = SQM_TARGET_VARIANT_BY_SOURCE.get(normalizedVariantId);
+    if (mappedVariantId && mappedVariantId !== normalizedVariantId) {
+      return mappedVariantId;
+    }
+
+    return normalizedVariantId;
   }
 
   function applyPropertiesToItemRecord(item) {
@@ -117,28 +138,78 @@
       };
     }
 
-    const sqmProperties = getSqmPropertiesForVariant(item.id ?? item.variant_id);
-    if (!sqmProperties) {
+    const sourceVariantId = item.id ?? item.variant_id;
+    const normalizedSourceVariantId =
+      sourceVariantId === null || sourceVariantId === undefined ? null : String(sourceVariantId).trim();
+    const mappedVariantId = resolveMappedVariantId(normalizedSourceVariantId);
+    const targetVariantId = mappedVariantId || normalizedSourceVariantId;
+
+    let nextItem = item;
+    let changed = false;
+
+    if (
+      normalizedSourceVariantId &&
+      mappedVariantId &&
+      mappedVariantId !== normalizedSourceVariantId
+    ) {
+      nextItem = { ...nextItem };
+
+      if (Object.prototype.hasOwnProperty.call(nextItem, "id")) {
+        nextItem.id = mappedVariantId;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(nextItem, "variant_id")) {
+        nextItem.variant_id = mappedVariantId;
+      }
+
+      changed = true;
+    }
+
+    const sqmProperties = getSqmPropertiesForVariant(targetVariantId);
+    if (!sqmProperties && !changed) {
       return {
         changed: false,
         item,
       };
     }
 
-    const existingProperties = isPlainObject(item.properties) ? item.properties : {};
+    const existingProperties = isPlainObject(nextItem.properties) ? nextItem.properties : {};
     const nextProperties = { ...existingProperties };
-    let changed = false;
+    let propertiesChanged = false;
 
-    SQM_PROPERTY_KEYS.forEach((propertyKey) => {
-      if (typeof nextProperties[propertyKey] === "string") return;
-      const sqmValue = sqmProperties[propertyKey];
-      if (typeof sqmValue !== "string") return;
-      nextProperties[propertyKey] = sqmValue;
-      changed = true;
-    });
+    if (
+      normalizedSourceVariantId &&
+      mappedVariantId &&
+      mappedVariantId !== normalizedSourceVariantId &&
+      (
+        typeof nextProperties[SELECTED_VARIANT_PROPERTY_KEY] !== "string" ||
+        !nextProperties[SELECTED_VARIANT_PROPERTY_KEY].trim()
+      )
+    ) {
+      nextProperties[SELECTED_VARIANT_PROPERTY_KEY] = normalizedSourceVariantId;
+      propertiesChanged = true;
+    }
+
+    if (sqmProperties) {
+      SQM_PROPERTY_KEYS.forEach((propertyKey) => {
+        if (typeof nextProperties[propertyKey] === "string") return;
+        const sqmValue = sqmProperties[propertyKey];
+        if (typeof sqmValue !== "string") return;
+        nextProperties[propertyKey] = sqmValue;
+        propertiesChanged = true;
+      });
+    }
 
     if (typeof nextProperties[SQM_UID_PROPERTY_KEY] !== "string" || !nextProperties[SQM_UID_PROPERTY_KEY].trim()) {
       nextProperties[SQM_UID_PROPERTY_KEY] = generateSqmUid();
+      propertiesChanged = true;
+    }
+
+    if (propertiesChanged) {
+      if (nextItem === item) {
+        nextItem = { ...nextItem };
+      }
+      nextItem.properties = nextProperties;
       changed = true;
     }
 
@@ -151,10 +222,7 @@
 
     return {
       changed: true,
-      item: {
-        ...item,
-        properties: nextProperties,
-      },
+      item: nextItem,
     };
   }
 
@@ -199,9 +267,29 @@
 
   function applyPropertiesToSearchParams(searchParams) {
     let changed = false;
-    const topLevelProperties = getSqmPropertiesForVariant(
-      searchParams.get("id") || searchParams.get("variant_id"),
-    );
+    const topLevelOriginalVariantId = String(
+      searchParams.get("id") || searchParams.get("variant_id") || "",
+    ).trim();
+    const topLevelMappedVariantId = resolveMappedVariantId(topLevelOriginalVariantId);
+    const topLevelVariantId = topLevelMappedVariantId || topLevelOriginalVariantId;
+
+    if (
+      topLevelOriginalVariantId &&
+      topLevelMappedVariantId &&
+      topLevelMappedVariantId !== topLevelOriginalVariantId
+    ) {
+      if (searchParams.has("id")) {
+        searchParams.set("id", topLevelMappedVariantId);
+        changed = true;
+      }
+
+      if (searchParams.has("variant_id")) {
+        searchParams.set("variant_id", topLevelMappedVariantId);
+        changed = true;
+      }
+    }
+
+    const topLevelProperties = getSqmPropertiesForVariant(topLevelVariantId);
 
     if (topLevelProperties) {
       SQM_PROPERTY_KEYS.forEach((propertyKey) => {
@@ -220,16 +308,44 @@
       }
     }
 
-    const itemVariantIdsByIndex = new Map();
-    for (const [key, value] of searchParams.entries()) {
-      const itemIndex = parseItemIndexKey(key);
-      if (itemIndex !== null) {
-        itemVariantIdsByIndex.set(itemIndex, String(value));
+    if (
+      topLevelOriginalVariantId &&
+      topLevelMappedVariantId &&
+      topLevelMappedVariantId !== topLevelOriginalVariantId
+    ) {
+      const selectedVariantKey = `properties[${SELECTED_VARIANT_PROPERTY_KEY}]`;
+      if (!searchParams.has(selectedVariantKey)) {
+        searchParams.set(selectedVariantKey, topLevelOriginalVariantId);
+        changed = true;
       }
     }
 
-    itemVariantIdsByIndex.forEach((variantId, itemIndex) => {
-      const sqmProperties = getSqmPropertiesForVariant(variantId);
+    const itemVariantIdsByIndex = new Map();
+    for (const [key, value] of searchParams.entries()) {
+      const parsed = parseItemIndexKey(key);
+      if (!parsed) continue;
+
+      const originalVariantId = String(value || "").trim();
+      const mappedVariantId = resolveMappedVariantId(originalVariantId);
+      const effectiveVariantId = mappedVariantId || originalVariantId;
+
+      if (
+        originalVariantId &&
+        mappedVariantId &&
+        mappedVariantId !== originalVariantId
+      ) {
+        searchParams.set(key, mappedVariantId);
+        changed = true;
+      }
+
+      itemVariantIdsByIndex.set(parsed.itemIndex, {
+        originalVariantId,
+        effectiveVariantId,
+      });
+    }
+
+    itemVariantIdsByIndex.forEach(({ originalVariantId, effectiveVariantId }, itemIndex) => {
+      const sqmProperties = getSqmPropertiesForVariant(effectiveVariantId);
       if (!sqmProperties) return;
 
       SQM_PROPERTY_KEYS.forEach((propertyKey) => {
@@ -245,6 +361,18 @@
       if (!searchParams.has(uidKey)) {
         searchParams.set(uidKey, generateSqmUid());
         changed = true;
+      }
+
+      if (
+        originalVariantId &&
+        effectiveVariantId &&
+        effectiveVariantId !== originalVariantId
+      ) {
+        const selectedVariantKey = `items[${itemIndex}][properties][${SELECTED_VARIANT_PROPERTY_KEY}]`;
+        if (!searchParams.has(selectedVariantKey)) {
+          searchParams.set(selectedVariantKey, originalVariantId);
+          changed = true;
+        }
       }
     });
 
@@ -253,9 +381,29 @@
 
   function applyPropertiesToFormData(formData) {
     let changed = false;
-    const topLevelProperties = getSqmPropertiesForVariant(
-      formData.get("id") || formData.get("variant_id"),
-    );
+    const topLevelOriginalVariantId = String(
+      formData.get("id") || formData.get("variant_id") || "",
+    ).trim();
+    const topLevelMappedVariantId = resolveMappedVariantId(topLevelOriginalVariantId);
+    const topLevelVariantId = topLevelMappedVariantId || topLevelOriginalVariantId;
+
+    if (
+      topLevelOriginalVariantId &&
+      topLevelMappedVariantId &&
+      topLevelMappedVariantId !== topLevelOriginalVariantId
+    ) {
+      if (formData.has("id")) {
+        formData.set("id", topLevelMappedVariantId);
+        changed = true;
+      }
+
+      if (formData.has("variant_id")) {
+        formData.set("variant_id", topLevelMappedVariantId);
+        changed = true;
+      }
+    }
+
+    const topLevelProperties = getSqmPropertiesForVariant(topLevelVariantId);
 
     if (topLevelProperties) {
       SQM_PROPERTY_KEYS.forEach((propertyKey) => {
@@ -274,16 +422,44 @@
       }
     }
 
-    const itemVariantIdsByIndex = new Map();
-    for (const [key, value] of formData.entries()) {
-      const itemIndex = parseItemIndexKey(key);
-      if (itemIndex !== null) {
-        itemVariantIdsByIndex.set(itemIndex, String(value));
+    if (
+      topLevelOriginalVariantId &&
+      topLevelMappedVariantId &&
+      topLevelMappedVariantId !== topLevelOriginalVariantId
+    ) {
+      const selectedVariantKey = `properties[${SELECTED_VARIANT_PROPERTY_KEY}]`;
+      if (!formData.has(selectedVariantKey)) {
+        formData.set(selectedVariantKey, topLevelOriginalVariantId);
+        changed = true;
       }
     }
 
-    itemVariantIdsByIndex.forEach((variantId, itemIndex) => {
-      const sqmProperties = getSqmPropertiesForVariant(variantId);
+    const itemVariantIdsByIndex = new Map();
+    for (const [key, value] of formData.entries()) {
+      const parsed = parseItemIndexKey(key);
+      if (!parsed) continue;
+
+      const originalVariantId = String(value || "").trim();
+      const mappedVariantId = resolveMappedVariantId(originalVariantId);
+      const effectiveVariantId = mappedVariantId || originalVariantId;
+
+      if (
+        originalVariantId &&
+        mappedVariantId &&
+        mappedVariantId !== originalVariantId
+      ) {
+        formData.set(key, mappedVariantId);
+        changed = true;
+      }
+
+      itemVariantIdsByIndex.set(parsed.itemIndex, {
+        originalVariantId,
+        effectiveVariantId,
+      });
+    }
+
+    itemVariantIdsByIndex.forEach(({ originalVariantId, effectiveVariantId }, itemIndex) => {
+      const sqmProperties = getSqmPropertiesForVariant(effectiveVariantId);
       if (!sqmProperties) return;
 
       SQM_PROPERTY_KEYS.forEach((propertyKey) => {
@@ -299,6 +475,18 @@
       if (!formData.has(uidKey)) {
         formData.set(uidKey, generateSqmUid());
         changed = true;
+      }
+
+      if (
+        originalVariantId &&
+        effectiveVariantId &&
+        effectiveVariantId !== originalVariantId
+      ) {
+        const selectedVariantKey = `items[${itemIndex}][properties][${SELECTED_VARIANT_PROPERTY_KEY}]`;
+        if (!formData.has(selectedVariantKey)) {
+          formData.set(selectedVariantKey, originalVariantId);
+          changed = true;
+        }
       }
     });
 
@@ -512,6 +700,141 @@
     }
   }
 
+  function getVariantRecords(root) {
+    const variantsElement = root.querySelector(VARIANTS_SELECTOR);
+    if (!variantsElement) return [];
+
+    try {
+      const raw = JSON.parse(variantsElement.textContent || "[]");
+      if (!Array.isArray(raw)) return [];
+
+      return raw.reduce((variants, entry) => {
+        if (!isPlainObject(entry)) return variants;
+
+        const id = String(entry.id ?? "").trim();
+        const price =
+          typeof entry.price === "number"
+            ? entry.price
+            : parseNumber(String(entry.price ?? ""));
+        if (!id || price === null || !Number.isFinite(price) || price <= 0) {
+          return variants;
+        }
+
+        variants.push({
+          id,
+          price,
+          title: String(entry.title ?? ""),
+          sku: String(entry.sku ?? "").trim(),
+          options: Array.isArray(entry.options)
+            ? entry.options.map((value) => String(value ?? ""))
+            : [],
+        });
+
+        return variants;
+      }, []);
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function normalizeVariantText(value) {
+    return String(value ?? "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function stripAreaSuffixFromValue(value) {
+    const normalized = normalizeVariantText(value);
+    if (!normalized) return "";
+
+    return normalized
+      .replace(/\s*-\s*area\s*\([^)]*\)\s*[\d.,]+\s*sq\s*m(?:\s*-\s*item\.?\s*no-?\s*\d+)?\s*$/i, "")
+      .replace(/\s*-\s*item\.?\s*no-?\s*\d+\s*$/i, "")
+      .trim();
+  }
+
+  function hasAreaDescriptor(value) {
+    return /area\s*\([^)]*\)/i.test(String(value ?? ""));
+  }
+
+  function buildVariantIdentityTokens(variant) {
+    if (!variant) return [];
+
+    const tokens = new Set();
+    const addToken = (value) => {
+      const stripped = stripAreaSuffixFromValue(value);
+      if (stripped) tokens.add(stripped);
+    };
+
+    addToken(variant.title);
+    if (Array.isArray(variant.options)) {
+      variant.options.forEach((value) => {
+        addToken(value);
+      });
+    }
+
+    return Array.from(tokens);
+  }
+
+  function resolvePricingVariantId(selectedVariantId, totalPrice, variants, variantsById) {
+    const normalizedSelectedVariantId = String(selectedVariantId ?? "").trim();
+    if (!normalizedSelectedVariantId) return null;
+    if (!Number.isFinite(totalPrice) || totalPrice <= 0) return normalizedSelectedVariantId;
+    if (!Array.isArray(variants) || variants.length === 0) return normalizedSelectedVariantId;
+
+    const sourceVariant = variantsById.get(normalizedSelectedVariantId);
+    if (!sourceVariant) return normalizedSelectedVariantId;
+
+    const hasAreaStyleVariants = variants.some((variant) => {
+      if (hasAreaDescriptor(variant.title)) return true;
+      if (!Array.isArray(variant.options)) return false;
+      return variant.options.some((value) => hasAreaDescriptor(value));
+    });
+    if (!hasAreaStyleVariants) return sourceVariant.id;
+
+    let candidates = variants.filter((variant) => variant.id !== sourceVariant.id);
+    if (candidates.length === 0) return sourceVariant.id;
+
+    if (sourceVariant.sku) {
+      const sameSkuCandidates = candidates.filter((variant) => variant.sku === sourceVariant.sku);
+      if (sameSkuCandidates.length > 0) {
+        candidates = sameSkuCandidates;
+      }
+    }
+
+    const sourceTokens = new Set(buildVariantIdentityTokens(sourceVariant));
+    if (sourceTokens.size > 0) {
+      const identityMatchedCandidates = candidates.filter((variant) => {
+        const variantTokens = buildVariantIdentityTokens(variant);
+        return variantTokens.some((token) => sourceTokens.has(token));
+      });
+      if (identityMatchedCandidates.length > 0) {
+        candidates = identityMatchedCandidates;
+      }
+    }
+
+    if (candidates.length === 0) return sourceVariant.id;
+
+    let closestVariant = candidates[0];
+    let closestDiff = Math.abs(closestVariant.price - totalPrice);
+
+    candidates.forEach((candidate) => {
+      const diff = Math.abs(candidate.price - totalPrice);
+      if (diff < closestDiff) {
+        closestVariant = candidate;
+        closestDiff = diff;
+      }
+    });
+
+    const sourceDiff = Math.abs(sourceVariant.price - totalPrice);
+    if (sourceDiff <= closestDiff + 0.000001) {
+      return sourceVariant.id;
+    }
+
+    return closestVariant.id;
+  }
+
   function getSelectedVariantId(forms) {
     for (const form of forms) {
       const variantId = getVariantIdFromForm(form);
@@ -568,9 +891,12 @@
     const locale = root.dataset.locale || "en-US";
     const currencyFormatter = getCurrencyFormatter(locale, currency);
     const variantPrices = getVariantPrices(root);
+    const variantRecords = getVariantRecords(root);
+    const variantsById = new Map(variantRecords.map((variant) => [variant.id, variant]));
     const boundForms = new WeakSet();
     const boundVariantInputs = new WeakSet();
     const trackedVariantIds = new Set();
+    const trackedSourceVariantIds = new Set();
 
     function setError(message) {
       errorOutput.textContent = message;
@@ -653,16 +979,35 @@
         SQM_PROPERTIES_BY_VARIANT.delete(variantId);
       });
       trackedVariantIds.clear();
+      trackedSourceVariantIds.forEach((sourceVariantId) => {
+        SQM_TARGET_VARIANT_BY_SOURCE.delete(sourceVariantId);
+      });
+      trackedSourceVariantIds.clear();
 
       if (!measurement.valid) return null;
 
       const properties = buildPropertiesFromMeasurement(measurement);
       forms.forEach((form) => {
-        const variantId = getVariantIdFromForm(form);
-        if (!variantId) return;
+        const selectedVariantId = getVariantIdFromForm(form);
+        if (!selectedVariantId) return;
 
-        trackedVariantIds.add(variantId);
-        SQM_PROPERTIES_BY_VARIANT.set(variantId, properties);
+        trackedVariantIds.add(selectedVariantId);
+        SQM_PROPERTIES_BY_VARIANT.set(selectedVariantId, properties);
+
+        const pricingVariantId = resolvePricingVariantId(
+          selectedVariantId,
+          measurement.totalPrice,
+          variantRecords,
+          variantsById,
+        );
+
+        if (pricingVariantId && pricingVariantId !== selectedVariantId) {
+          trackedSourceVariantIds.add(selectedVariantId);
+          SQM_TARGET_VARIANT_BY_SOURCE.set(selectedVariantId, pricingVariantId);
+
+          trackedVariantIds.add(pricingVariantId);
+          SQM_PROPERTIES_BY_VARIANT.set(pricingVariantId, properties);
+        }
       });
 
       return properties;
@@ -685,6 +1030,41 @@
 
         setError("");
         const properties = buildPropertiesFromMeasurement(measurement);
+        const selectedVariantId = getVariantIdFromForm(form);
+        const pricingVariantId = resolvePricingVariantId(
+          selectedVariantId,
+          measurement.totalPrice,
+          variantRecords,
+          variantsById,
+        );
+
+        if (selectedVariantId) {
+          properties[SELECTED_VARIANT_PROPERTY_KEY] = selectedVariantId;
+        }
+
+        if (
+          selectedVariantId &&
+          pricingVariantId &&
+          pricingVariantId !== selectedVariantId
+        ) {
+          trackedSourceVariantIds.add(selectedVariantId);
+          SQM_TARGET_VARIANT_BY_SOURCE.set(selectedVariantId, pricingVariantId);
+          trackedVariantIds.add(pricingVariantId);
+          SQM_PROPERTIES_BY_VARIANT.set(pricingVariantId, properties);
+
+          const variantInput = form.querySelector('[name="id"]');
+          if (variantInput) {
+            const originalVariantId = String(variantInput.value || "").trim();
+            variantInput.value = pricingVariantId;
+
+            window.setTimeout(() => {
+              if (String(variantInput.value || "").trim() === pricingVariantId) {
+                variantInput.value = originalVariantId || selectedVariantId;
+              }
+            }, 750);
+          }
+        }
+
         properties[SQM_UID_PROPERTY_KEY] = generateSqmUid();
         applyPropertiesToForm(form, properties);
       });

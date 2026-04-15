@@ -97,11 +97,13 @@
       }, { once: true });
 
       function setTexts() {
-        document.getElementById('wsg-title').innerHTML = `{{ page.title }}`;
+        var wsgPageTitle = {{ page.title | json | replace: '</', '<\/' }} || '';
+        var wsgPageContent = {{ page.content | json | replace: '</', '<\/' }} || '';
+        document.getElementById('wsg-title').innerHTML = wsgPageTitle;
 
         const wsgDefaultPageContent = 'Wholesale Gorilla';
-        if (`{{ page.content }}`.indexOf(wsgDefaultPageContent) === -1) {
-          document.getElementById('wsg-account-create-message').innerHTML = `{{ page.content }}`;
+        if (wsgPageContent.indexOf(wsgDefaultPageContent) === -1) {
+          document.getElementById('wsg-account-create-message').innerHTML = wsgPageContent;
         }
       }
     </script>
@@ -121,11 +123,13 @@
       }, { once: true });
       
       function setTexts() {
-        document.getElementById('wsg-title').innerHTML = `{{ page.title }}`;
+        var wsgPageTitle = {{ page.title | json | replace: '</', '<\/' }} || '';
+        var wsgPageContent = {{ page.content | json | replace: '</', '<\/' }} || '';
+        document.getElementById('wsg-title').innerHTML = wsgPageTitle;
 
         const wsgDefaultPageContent = 'Wholesale Gorilla';
-        if (`{{ page.content }}`.indexOf(wsgDefaultPageContent) === -1) {
-          document.getElementById('wsg-login-desc').innerHTML = `{{ page.content }}`;
+        if (wsgPageContent.indexOf(wsgDefaultPageContent) === -1) {
+          document.getElementById('wsg-login-desc').innerHTML = wsgPageContent;
         }
       }
     </script>
@@ -154,7 +158,7 @@
       var wsgProdArraySP = [];
       var wsgProdIndex = 0;
       var wsgDataSPTemp;
-      var wsgCartItems = {{ cart.items | json}}
+      var wsgCartItems = {{ cart.items | json | replace: '</', '<\/' }}
 
       const wsgUrlSearchParams = new URLSearchParams(window.location.search);
       const wsgUrlParams = Object.fromEntries(wsgUrlSearchParams.entries());
@@ -171,11 +175,13 @@
       }, { once: true })
 
       function setTexts() {
-        document.getElementById('wsg-title').innerHTML = `{{ page.title }}`;
+        var wsgPageTitle = {{ page.title | json | replace: '</', '<\/' }} || '';
+        var wsgPageContent = {{ page.content | json | replace: '</', '<\/' }} || '';
+        document.getElementById('wsg-title').innerHTML = wsgPageTitle;
 
         const wsgDefaultPageContent = 'Wholesale Gorilla';
-        if (`{{ page.content }}`.indexOf(wsgDefaultPageContent) === -1) {
-          document.getElementById('wsg-quick-order-message').innerHTML = `{{ page.content }}`;
+        if (wsgPageContent.indexOf(wsgDefaultPageContent) === -1) {
+          document.getElementById('wsg-quick-order-message').innerHTML = wsgPageContent;
         }
       }
     </script>
@@ -197,14 +203,14 @@
     <script>
       var wsgCurrency = "{{ shop.currency }}";
       //declare cart specific liquid variables
-      var wsgCustomerId = {{customer.id | json}};
-      var wsgCustomerAddresses = {{customer.addresses | json}};
+      var wsgCustomerId = {{ customer.id | json | replace: '</', '<\/' }};
+      var wsgCustomerAddresses = {{ customer.addresses | json | replace: '</', '<\/' }};
 
-      var wsgCart = {{cart | json}};
-      var wsgShopCountry = {{shop.address.country | json}};
+      var wsgCart = {{ cart | json | replace: '</', '<\/' }};
+      var wsgShopCountry = {{ shop.address.country | json | replace: '</', '<\/' }};
       wsgRunCart = true;
       wsgRunProxy = true;
-      var wsgStockData = {{wsgStockData | strip | json}};
+      var wsgStockData = {{ wsgStockData | strip | json | replace: '</', '<\/' }};
       var wsgShopLang = "{{request.locale.iso_code }}";
 
       const wsgUrlSearchParams = new URLSearchParams(window.location.search);
@@ -446,233 +452,6 @@
         });
       }
 
-      function toIntegerCents(value) {
-        var parsed = Number.parseFloat(value);
-        if (!Number.isFinite(parsed)) return null;
-        return Math.round(parsed);
-      }
-
-      function formatCartMoney(cents, currencyCode) {
-        var normalizedCents = toIntegerCents(cents);
-        if (normalizedCents === null) return '';
-
-        if (window.Shopify && typeof window.Shopify.formatMoney === 'function') {
-          try {
-            var moneyFormat = (window.theme && window.theme.moneyFormat) || window.Shopify.money_format || '${{amount}}';
-            return window.Shopify.formatMoney(normalizedCents, moneyFormat);
-          } catch (error) {
-            // Fall through to Intl fallback.
-          }
-        }
-
-        var amount = normalizedCents / 100;
-        try {
-          return new Intl.NumberFormat(undefined, {
-            style: 'currency',
-            currency: currencyCode || wsgCurrency || 'USD'
-          }).format(amount);
-        } catch (error) {
-          return (currencyCode || wsgCurrency || 'USD') + ' ' + amount.toFixed(2);
-        }
-      }
-
-      function isLikelyPriceText(text) {
-        var normalized = String(text || '').replace(/\s+/g, ' ').trim();
-        if (!normalized) return false;
-        if (!/[\$€£¥₹₱₩₫₽₪₴₦฿]|\b[A-Z]{3}\b/.test(normalized)) return false;
-
-        return /^[-+]?[^0-9-+]*\d{1,3}(?:[, ]\d{3})*(?:\.\d{2})?(?:\s*[A-Z]{3})?$/.test(normalized) ||
-          /^[-+]?[^0-9-+]*\d+(?:\.\d{2})?(?:\s*[A-Z]{3})?$/.test(normalized);
-      }
-
-      function getPriceTextNodesFromRow(rowContainer) {
-        if (!rowContainer || !rowContainer.querySelectorAll) return [];
-
-        var preferredSelectors = "[data-cart-item-price],[data-price],.price,.money,.cart-item__price,.wsg-cart-item-price,.wsg-item-price,.amount";
-        var preferredNodes = Array.from(rowContainer.querySelectorAll(preferredSelectors));
-        var genericNodes = Array.from(rowContainer.querySelectorAll('span,p,strong,div,td,th'));
-        var nodes = preferredNodes.length ? preferredNodes : genericNodes;
-        var seen = new Set();
-
-        return nodes.filter(function (node) {
-          if (!node || seen.has(node)) return false;
-          seen.add(node);
-          if (node.closest && node.closest('s,del,.compare-at,[data-compare-at-price]')) return false;
-          if (node.children && node.children.length > 0) return false;
-
-          var text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
-          return isLikelyPriceText(text);
-        });
-      }
-
-      function findCartItemByKey(items, itemKey) {
-        if (!Array.isArray(items) || !itemKey) return null;
-        for (var i = 0; i < items.length; i += 1) {
-          if (items[i] && items[i].key === itemKey) return items[i];
-        }
-        return null;
-      }
-
-      function resolveCartItemFromAnchor(anchor, cartJson, anchorIndex) {
-        if (!anchor || !cartJson || !Array.isArray(cartJson.items)) return null;
-
-        var keyFromAttrs = getClosestAttributeValue(anchor, ['data-cart-item-key', 'data-key', 'data-item-key']);
-        if (keyFromAttrs) {
-          var keyedItem = findCartItemByKey(cartJson.items, keyFromAttrs);
-          if (keyedItem) return keyedItem;
-        }
-
-        try {
-          var hrefUrl = new URL(anchor.getAttribute('href') || '', window.location.origin);
-          var hrefLine = Number.parseInt(hrefUrl.searchParams.get('line') || '', 10);
-          if (Number.isFinite(hrefLine) && hrefLine > 0 && cartJson.items[hrefLine - 1]) {
-            return cartJson.items[hrefLine - 1];
-          }
-        } catch (error) {
-          // no-op
-        }
-
-        var rowContainer = findRowContainerFromRemoveControl(anchor);
-        var measurements = getMeasurementsFromNode(rowContainer);
-        if (measurements) {
-          var matchedKey = findCartItemKeyByMeasurements(cartJson.items, measurements);
-          if (matchedKey) {
-            var measuredItem = findCartItemByKey(cartJson.items, matchedKey);
-            if (measuredItem) return measuredItem;
-          }
-        }
-
-        if (cartJson.items[anchorIndex]) return cartJson.items[anchorIndex];
-        return null;
-      }
-
-      function parsePositiveInt(value) {
-        var parsed = Number.parseInt(String(value || '').trim(), 10);
-        if (!Number.isFinite(parsed) || parsed <= 0) return null;
-        return parsed;
-      }
-
-      function getLineIndexFromHref(href) {
-        if (!href) return null;
-        try {
-          var parsedUrl = new URL(href, window.location.origin);
-          return parsePositiveInt(parsedUrl.searchParams.get('line'));
-        } catch (error) {
-          return null;
-        }
-      }
-
-      function getLineIndexFromRow(rowContainer) {
-        if (!rowContainer) return null;
-
-        var lineAttrElement = rowContainer.querySelector('[data-line],[data-cart-line],[data-index]');
-        if (lineAttrElement) {
-          var lineFromAttr = parsePositiveInt(
-            lineAttrElement.getAttribute('data-line') ||
-            lineAttrElement.getAttribute('data-cart-line') ||
-            lineAttrElement.getAttribute('data-index')
-          );
-          if (lineFromAttr !== null) return lineFromAttr;
-        }
-
-        var removeAnchor = rowContainer.querySelector("a[href*='/cart/change']");
-        if (removeAnchor) {
-          var lineFromHref = getLineIndexFromHref(removeAnchor.getAttribute('href'));
-          if (lineFromHref !== null) return lineFromHref;
-        }
-
-        var quantityInput = rowContainer.querySelector("input[id*='Quantity-'],input[id*='quantity-']");
-        if (quantityInput && quantityInput.id) {
-          var idMatch = quantityInput.id.match(/(\d+)$/);
-          if (idMatch && idMatch[1]) {
-            var lineFromId = parsePositiveInt(idMatch[1]);
-            if (lineFromId !== null) return lineFromId;
-          }
-        }
-
-        return null;
-      }
-
-      function getRenderedCartRows(container) {
-        if (!container) return [];
-        var rowSet = new Set();
-        var rowSelector = 'tr,li,.cart-item,.wsg-cart-item,.wsg-item-row,[data-cart-item]';
-
-        Array.from(
-          container.querySelectorAll(
-            "input.quantity__input,input[name='updates[]'],[name='remove'],.wsg-cart-remove,.cart__remove,a[href*='/cart/change'][href*='quantity=0']"
-          )
-        ).forEach(function (node) {
-          var row = node.closest ? node.closest(rowSelector) : null;
-          if (row) rowSet.add(row);
-        });
-
-        if (!rowSet.size) {
-          Array.from(container.querySelectorAll(rowSelector)).forEach(function (row) {
-            var text = String(row.innerText || '').replace(/\s+/g, ' ');
-            if (/length_mm\s*:/i.test(text) && /width_mm\s*:/i.test(text)) {
-              rowSet.add(row);
-            }
-          });
-        }
-
-        return Array.from(rowSet);
-      }
-
-      function resolveCartItemFromRow(rowContainer, cartJson, rowIndex) {
-        if (!rowContainer || !cartJson || !Array.isArray(cartJson.items)) return null;
-
-        var rowItemKey = getClosestAttributeValue(rowContainer, ['data-cart-item-key', 'data-key', 'data-item-key']);
-        if (rowItemKey) {
-          var keyedItem = findCartItemByKey(cartJson.items, rowItemKey);
-          if (keyedItem) return keyedItem;
-        }
-
-        var lineIndex = getLineIndexFromRow(rowContainer);
-        if (lineIndex !== null && cartJson.items[lineIndex - 1]) {
-          return cartJson.items[lineIndex - 1];
-        }
-
-        var measurements = getMeasurementsFromNode(rowContainer);
-        if (measurements) {
-          var matchedKey = findCartItemKeyByMeasurements(cartJson.items, measurements);
-          if (matchedKey) {
-            var measuredItem = findCartItemByKey(cartJson.items, matchedKey);
-            if (measuredItem) return measuredItem;
-          }
-        }
-
-        var removeAnchor = rowContainer.querySelector("a[href*='/cart/change']");
-        if (removeAnchor) {
-          var anchoredItem = resolveCartItemFromAnchor(removeAnchor, cartJson, rowIndex);
-          if (anchoredItem) return anchoredItem;
-        }
-
-        if (cartJson.items[rowIndex]) return cartJson.items[rowIndex];
-        return null;
-      }
-
-      function syncRenderedLinePrices(cartJson) {
-        var container = document.getElementById('wsg-cart');
-        if (!container || !cartJson || !Array.isArray(cartJson.items) || !cartJson.items.length) return;
-
-        var rows = getRenderedCartRows(container);
-        rows.forEach(function (rowContainer, rowIndex) {
-          var cartItem = resolveCartItemFromRow(rowContainer, cartJson, rowIndex);
-          if (!cartItem) return;
-
-          var formattedLinePrice = formatCartMoney(cartItem.final_line_price, cartJson.currency || wsgCurrency);
-          if (!formattedLinePrice) return;
-
-          var priceNodes = getPriceTextNodesFromRow(rowContainer);
-          if (!priceNodes.length) return;
-
-          priceNodes.forEach(function (priceNode) {
-            priceNode.textContent = formattedLinePrice;
-          });
-        });
-      }
-
       function resolveItemKeyFromLine(lineValue) {
         var normalized = String(lineValue || '').trim();
         if (!normalized) return '';
@@ -904,31 +683,28 @@
       document.addEventListener('DOMContentLoaded', async function () {
         installWsgCartChangeRequestPatch();
         await appendContent('GET', makeRelativeUrlMarketAware(`/a/wsg/proxy/cart?pages=${wsgCartTotalPages}&page=${wsgCartPage}`), 'wsg-cart');
-        rewriteRemoveControlsToItemKeys(wsgCart);
-        syncRenderedLinePrices(wsgCart);
         try {
           var cartResponse = await fetch(makeRelativeUrlMarketAware('/cart.js'), {
             credentials: 'same-origin',
             headers: { 'Accept': 'application/json' }
           });
           var cartJson = await cartResponse.json();
-          wsgCart = cartJson;
           rewriteRemoveControlsToItemKeys(cartJson);
-          syncRenderedLinePrices(cartJson);
         } catch (error) {
           console.warn('Unable to rewrite WSG remove controls to cart item keys.', error);
-          syncRenderedLinePrices(wsgCart);
         }
         installWsgSafeRemoveHandler();
         setTexts();
       }, { once: true })
       function setTexts() {
-        document.getElementById('wsg-cart-title').innerHTML = `{{ page.title }}`;
-        document.getElementById('wsg-cart-labe-title').innerHTML = `{{ page.title }}`;
+        var wsgPageTitle = {{ page.title | json | replace: '</', '<\/' }} || '';
+        var wsgPageContent = {{ page.content | json | replace: '</', '<\/' }} || '';
+        document.getElementById('wsg-cart-title').innerHTML = wsgPageTitle;
+        document.getElementById('wsg-cart-labe-title').innerHTML = wsgPageTitle;
 
         const wsgDefaultPageContent = 'Wholesale Gorilla';
-        if (`{{ page.content }}`.indexOf(wsgDefaultPageContent) === -1) {
-          document.getElementById('wsg-cart-message').innerHTML = `{{ page.content }}`;
+        if (wsgPageContent.indexOf(wsgDefaultPageContent) === -1) {
+          document.getElementById('wsg-cart-message').innerHTML = wsgPageContent;
         }
       }
     </script>
