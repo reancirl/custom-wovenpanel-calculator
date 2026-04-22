@@ -111,6 +111,7 @@ export function cartTransformRun(input) {
 
   for (const line of input.cart.lines) {
     if (line.merchandise.__typename !== "ProductVariant") continue;
+    if (line.parentRelationship?.parent?.id) continue;
 
     const product = line.merchandise.product;
     const enableSqmPricing = parseBoolean(product.enableSqmPricing?.value);
