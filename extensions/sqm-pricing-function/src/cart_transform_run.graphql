@@ -2,6 +2,11 @@ query CartTransformRunInput {
   cart {
     lines {
       id
+      parentRelationship {
+        parent {
+          id
+        }
+      }
       quantity
       cost {
         amountPerQuantity {

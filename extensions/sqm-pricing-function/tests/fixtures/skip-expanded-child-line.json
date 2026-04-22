@@ -6,8 +6,12 @@
       "cart": {
         "lines": [
           {
-            "id": "gid://shopify/CartLine/1",
-            "parentRelationship": null,
+            "id": "gid://shopify/CartLine/4",
+            "parentRelationship": {
+              "parent": {
+                "id": "gid://shopify/CartLine/1"
+              }
+            },
             "quantity": 1,
             "cost": {
               "amountPerQuantity": {
@@ -34,7 +38,7 @@
               "id": "gid://shopify/ProductVariant/1",
               "product": {
                 "enableSqmPricing": {
-                  "value": "false"
+                  "value": "true"
                 },
                 "minLength": null,
                 "maxLength": null,
