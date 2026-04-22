@@ -7,7 +7,6 @@
         "lines": [
           {
             "id": "gid://shopify/CartLine/3",
-            "parentRelationship": null,
             "quantity": 2,
             "cost": {
               "amountPerQuantity": {
