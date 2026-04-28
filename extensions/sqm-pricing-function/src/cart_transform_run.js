@@ -19,6 +19,7 @@ const DEFAULT_MAX_WIDTH = 100;
 const AREA_TOLERANCE = 0.01;
 const MM_PER_METER = 1000;
 const EXPANDED_ITEM_QUANTITY_PER_PARENT = 1;
+const TRADE_DISCOUNT_MULTIPLIER = 0.8;
 
 /**
  * @param {string | null | undefined} value
@@ -107,6 +108,9 @@ export function cartTransformRun(input) {
     return NO_CHANGES;
   }
 
+  const isTradeCustomer = input.cart.buyerIdentity?.customer?.isTradeCustomer === true;
+  const customerPriceMultiplier = isTradeCustomer ? TRADE_DISCOUNT_MULTIPLIER : 1;
+
   const operations = [];
 
   for (const line of input.cart.lines) {
@@ -148,7 +152,7 @@ export function cartTransformRun(input) {
 
     if (area === null || !Number.isFinite(area) || area <= 0) continue;
 
-    const newUnitPrice = area * baseUnitPrice;
+    const newUnitPrice = area * baseUnitPrice * customerPriceMultiplier;
     if (!Number.isFinite(newUnitPrice) || newUnitPrice <= 0) continue;
 
     const parsedLengthMm = parsePositiveDecimal(line.lengthMm?.value);
