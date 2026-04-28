@@ -1,10 +1,5 @@
 query CartTransformRunInput {
   cart {
-    buyerIdentity {
-      customer {
-        isTradeCustomer: hasAnyTag(tags: ["trade"])
-      }
-    }
     lines {
       id
       parentRelationship {
