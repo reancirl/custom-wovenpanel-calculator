@@ -747,6 +747,71 @@
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
+
+    /* --------------------------------------------------
+       Trade-customer subtotal lock
+       The cart-transform Shopify Function already applies
+       the trade discount to line prices, so cart.total_price
+       (rendered by Liquid) is the correct figure. Wholesale
+       Gorilla's storefront overlay then multiplies by 0.8
+       again — this lock pins the displayed subtotal back to
+       the Liquid-rendered value whenever something rewrites it.
+    -------------------------------------------------- */
+    if (IS_TRADE_CUSTOMER) {
+      const SUBTOTAL_SELECTOR = '.totals__subtotal-value';
+      const lockedSubtotals = new WeakSet();
+
+      const lockSubtotalElement = (el) => {
+        if (!el || lockedSubtotals.has(el)) return;
+        lockedSubtotals.add(el);
+
+        const correctText = el.textContent;
+        let resetting = false;
+
+        const subtotalObserver = new MutationObserver(() => {
+          if (resetting) return;
+          if (el.textContent === correctText) return;
+          resetting = true;
+          el.textContent = correctText;
+          // allow microtask to settle before listening again
+          Promise.resolve().then(() => {
+            resetting = false;
+          });
+        });
+
+        subtotalObserver.observe(el, {
+          childList: true,
+          characterData: true,
+          subtree: true,
+        });
+      };
+
+      const lockAllSubtotals = (root = document) => {
+        root.querySelectorAll?.(SUBTOTAL_SELECTOR).forEach(lockSubtotalElement);
+      };
+
+      lockAllSubtotals();
+      document.addEventListener('DOMContentLoaded', () => lockAllSubtotals());
+
+      // When cart.js replaces the totals section, capture the new subtotal element(s)
+      const subtotalRebindObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeType !== 1) return;
+            if (node.matches?.(SUBTOTAL_SELECTOR)) {
+              lockSubtotalElement(node);
+            } else {
+              lockAllSubtotals(node);
+            }
+          });
+        }
+      });
+
+      subtotalRebindObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+    }
   })();
 </script>
 
