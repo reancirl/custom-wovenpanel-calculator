@@ -1,6 +1,11 @@
 {% liquid
   assign target_product = product
 
+  assign trade_discount_multiplier = 1.0
+  if customer != blank and customer.tags contains 'trade'
+    assign trade_discount_multiplier = 0.8
+  endif
+
   if target_product != blank
     assign enable_sqm_pricing_raw = target_product.metafields.custom.enable_sqm_pricing.value
     assign enable_sqm_pricing = false
@@ -18,7 +23,7 @@
       assign min_width_mm = min_width | times: 1000.0 | round: 2
       assign max_width_mm = max_width | times: 1000.0 | round: 2
       assign initial_variant = target_product.selected_or_first_available_variant
-      assign initial_unit_price = initial_variant.price | divided_by: 100.0
+      assign initial_unit_price = initial_variant.price | divided_by: 100.0 | times: trade_discount_multiplier
     endif
   endif
 %}
@@ -86,7 +91,7 @@
     <script type="application/json" data-sqm-variant-prices>
       {
         {% for variant in target_product.variants %}
-          "{{ variant.id }}": {{ variant.price | divided_by: 100.0 }}{% unless forloop.last %},{% endunless %}
+          "{{ variant.id }}": {{ variant.price | divided_by: 100.0 | times: trade_discount_multiplier }}{% unless forloop.last %},{% endunless %}
         {% endfor %}
       }
     </script>
@@ -96,7 +101,7 @@
         {% for variant in target_product.variants %}
           {
             "id": "{{ variant.id }}",
-            "price": {{ variant.price | divided_by: 100.0 }},
+            "price": {{ variant.price | divided_by: 100.0 | times: trade_discount_multiplier }},
             "title": {{ variant.title | json }},
             "sku": {{ variant.sku | json }},
             "options": {{ variant.options | json }}
