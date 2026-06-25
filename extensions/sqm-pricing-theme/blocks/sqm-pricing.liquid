@@ -42,7 +42,7 @@
     data-locale="{{ request.locale.iso_code | default: shop.locale | replace: '_', '-' }}"
   >
     <div class="sqm-pricing-block__field-grid">
-      <label class="sqm-pricing-block__field">
+      {% comment %} <label class="sqm-pricing-block__field">
         <span>Length (mm)</span>
         <input
           type="number"
@@ -73,7 +73,7 @@
           Min {{ min_width_mm }} mm | Max {{ max_width_mm }} mm
         </small>
       </label>
-    </div>
+    </div> {% endcomment %}
 
     <p class="sqm-pricing-block__error" data-sqm-error role="alert" aria-live="polite"></p>
 

@@ -769,7 +769,7 @@ export default function SqmPricingPage() {
                     </s-grid>
 
                     <s-grid gap="base" gridTemplateColumns="repeat(auto-fit, minmax(12rem, 1fr))">
-                      {/* <s-number-field
+                      <s-number-field
                         label="Min length (mm)"
                         min="0.1"
                         step="0.01"
@@ -795,7 +795,7 @@ export default function SqmPricingPage() {
                             maxLength: nextValue,
                           }));
                         }}
-                      /> */}
+                      />
 
                       <s-number-field
                         label="Min width (mm)"
